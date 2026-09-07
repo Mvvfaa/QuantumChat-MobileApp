@@ -7,6 +7,7 @@ import '../api/qc_socket.dart';
 import '../crypto/key_storage.dart';
 import '../crypto/qc_crypto.dart';
 import '../models/models.dart';
+import '../utils/display_name.dart';
 import '../utils/group_payload.dart';
 import '../widgets/avatar_cache.dart';
 import 'auth_controller.dart';
@@ -277,15 +278,42 @@ class ChatController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> clearSelectedChat() async {
+  Future<void> clearSelectedChat({List<String> scopes = const ['all']}) async {
     final conv = selected;
     if (conv == null) return;
-    if (conv.type == ConversationType.dm) {
-      await auth.api.clearChat(peerId: conv.id);
-    } else {
-      await auth.api.clearChat(groupId: conv.id);
+    final clearingStarred = scopes.contains('starred');
+    var serverScopes = scopes.where((s) => s != 'starred').toList();
+
+    if (serverScopes.isEmpty && clearingStarred) {
+      for (final m in messages) {
+        m.isStarred = false;
+      }
+      notifyListeners();
+      return;
     }
-    messages = [];
+
+    if (scopes.contains('all') ||
+        ({'photo', 'video', 'voice', 'document', 'text'}.difference(serverScopes.toSet()).isEmpty)) {
+      serverScopes = ['all'];
+    }
+    if (serverScopes.isEmpty) serverScopes = ['all'];
+
+    if (conv.type == ConversationType.dm) {
+      await auth.api.clearChat(peerId: conv.id, scopes: serverScopes);
+    } else {
+      await auth.api.clearChat(groupId: conv.id, scopes: serverScopes);
+    }
+
+    if (serverScopes.contains('all')) {
+      messages = [];
+    } else {
+      messages = messages.where((m) => !serverScopes.any(m.matchesClearScope)).toList();
+    }
+    if (clearingStarred) {
+      for (final m in messages) {
+        m.isStarred = false;
+      }
+    }
     notifyListeners();
   }
 
@@ -756,6 +784,7 @@ class ChatController extends ChangeNotifier {
       pollVotes: pollVotes,
       eventData: eventData,
       announcementBody: announcementBody,
+      mediaCategory: raw['mediaCategory'] as String?,
     );
   }
 
@@ -1437,11 +1466,11 @@ class ChatController extends ChangeNotifier {
   String displayName(String userId) {
     if (userId == me.id) return 'You';
     for (final u in users) {
-      if (u.id == userId) return u.title;
+      if (u.id == userId) return getDisplayName(u);
     }
     for (final g in groups) {
       for (final m in g.members) {
-        if (m.id == userId) return m.title;
+        if (m.id == userId) return getDisplayName(m);
       }
     }
     return 'Member';

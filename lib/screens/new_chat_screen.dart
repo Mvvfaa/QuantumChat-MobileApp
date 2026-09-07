@@ -133,6 +133,8 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
   final name = TextEditingController();
   final selected = <String>{};
   bool busy = false;
+  String visibility = 'private';
+  String joinPolicy = 'open';
 
   @override
   void dispose() {
@@ -156,6 +158,38 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
               decoration: const InputDecoration(hintText: 'Group name'),
             ),
           ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Visibility', style: TextStyle(color: colors.textSecondary, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'private', label: Text('Private'), icon: Icon(Icons.lock_outline, size: 16)),
+                    ButtonSegment(value: 'public', label: Text('Public'), icon: Icon(Icons.public, size: 16)),
+                  ],
+                  selected: {visibility},
+                  onSelectionChanged: (s) => setState(() => visibility = s.first),
+                ),
+                if (visibility == 'public') ...[
+                  const SizedBox(height: 12),
+                  Text('Join policy', style: TextStyle(color: colors.textSecondary, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'open', label: Text('Open')),
+                      ButtonSegment(value: 'request', label: Text('Request')),
+                    ],
+                    selected: {joinPolicy},
+                    onSelectionChanged: (s) => setState(() => joinPolicy = s.first),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Align(
@@ -191,7 +225,12 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                   ? null
                   : () async {
                       setState(() => busy = true);
-                      final group = await chat.createGroup(name.text.trim(), selected.toList());
+                      final group = await chat.createGroup(
+                        name.text.trim(),
+                        selected.toList(),
+                        visibility: visibility,
+                        joinPolicy: visibility == 'public' ? joinPolicy : null,
+                      );
                       if (group != null && context.mounted) {
                         final conv = Conversation(
                           key: chat.storage.conversationKeyForGroup(group.id),

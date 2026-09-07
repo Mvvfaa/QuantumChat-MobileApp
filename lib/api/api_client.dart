@@ -301,10 +301,15 @@ class ApiClient {
     return QcUser.fromJson(body['data'] as Map<String, dynamic>);
   }
 
-  Future<void> clearChat({String? peerId, String? groupId}) async {
+  Future<void> clearChat({
+    String? peerId,
+    String? groupId,
+    List<String> scopes = const ['all'],
+  }) async {
     await post('/users/me/clear-chat', {
       if (peerId != null) 'peerId': peerId,
       if (groupId != null) 'groupId': groupId,
+      'scopes': scopes,
     });
   }
 

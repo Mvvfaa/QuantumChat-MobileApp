@@ -1,16 +1,23 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
+import 'package:record/record.dart';
 
 import '../models/models.dart';
+import '../state/auth_controller.dart';
 import '../state/chat_controller.dart';
 import '../state/theme_controller.dart';
 import '../theme/qc_theme.dart';
+import '../utils/screenshot_protection.dart';
 import '../widgets/attachment_bubble.dart';
+import '../widgets/clear_chat_sheet.dart';
 import '../widgets/common.dart';
 import '../widgets/edit_history_sheet.dart';
 import '../widgets/forward_sheet.dart';
@@ -18,11 +25,13 @@ import '../widgets/emoji_picker_sheet.dart';
 import '../widgets/gif_picker_sheet.dart';
 import '../widgets/group_message_content.dart';
 import '../widgets/image_lightbox.dart';
+import '../widgets/linkified_text.dart';
 import '../widgets/mention_overlay.dart';
 import '../widgets/message_actions_sheet.dart';
 import '../widgets/message_info_sheet.dart';
 import '../widgets/theme_scene.dart';
 import '../crypto/key_storage.dart';
+import 'chat_media_screen.dart';
 import 'group_info_screen.dart';
 import 'user_profile_screen.dart';
 import 'wallpaper_screen.dart';
@@ -59,6 +68,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(context.read<ChatController>().refreshOpenThread());
+      _syncScreenshotProtection();
     });
     _liveRefresh = Timer.periodic(const Duration(seconds: 2), (_) {
       if (!mounted) return;
@@ -66,8 +76,24 @@ class _ThreadScreenState extends State<ThreadScreen> {
     });
   }
 
+  void _syncScreenshotProtection() {
+    final chat = context.read<ChatController>();
+    final me = context.read<AuthController>().user;
+    final conv = chat.selected;
+    var enforce = false;
+    if (conv != null && me != null) {
+      if (conv.type == ConversationType.dm && !conv.isSelfChat) {
+        enforce = userRequiresScreenshotProtection(conv.peer);
+      } else if (conv.type == ConversationType.group) {
+        enforce = groupHasProtectedMember(conv.group, me.id);
+      }
+    }
+    unawaited(setSecureFlag(enforce));
+  }
+
   @override
   void dispose() {
+    unawaited(setSecureFlag(false));
     _liveRefresh?.cancel();
     _recordTimer?.cancel();
     unawaited(_recorder.dispose());
@@ -167,33 +193,93 @@ class _ThreadScreenState extends State<ThreadScreen> {
     if (file == null || !mounted) return;
     final bytes = await file.readAsBytes();
     if (!mounted) return;
+    await _confirmAndSendMedia(
+      bytes: bytes,
+      filename: file.name,
+      mimetype: file.mimeType ?? 'image/jpeg',
+      isVideo: false,
+    );
+  }
+
+  Future<void> _pickVideo() async {
+    final file = await ImagePicker().pickVideo(source: ImageSource.gallery);
+    if (file == null || !mounted) return;
+    final bytes = await file.readAsBytes();
+    if (!mounted) return;
+    await _confirmAndSendMedia(
+      bytes: bytes,
+      filename: file.name,
+      mimetype: file.mimeType ?? 'video/mp4',
+      isVideo: true,
+    );
+  }
+
+  Future<void> _confirmAndSendMedia({
+    required Uint8List bytes,
+    required String filename,
+    required String mimetype,
+    required bool isVideo,
+  }) async {
     final colors = context.read<ThemeController>().colors;
-    bool viewOnce = false;
+    var viewOnce = false;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setLocal) => AlertDialog(
             backgroundColor: colors.surface,
-            title: Text('Send photo', style: TextStyle(color: colors.textPrimary)),
-            content: Row(
+            title: Text(
+              isVideo ? 'Send video' : 'Send photo',
+              style: TextStyle(color: colors.textPrimary),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Checkbox(
-                  value: viewOnce,
-                  onChanged: (v) => setLocal(() => viewOnce = v ?? false),
-                  activeColor: colors.accent,
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: isVideo
+                      ? Container(
+                          height: 160,
+                          width: double.infinity,
+                          color: colors.elevated,
+                          alignment: Alignment.center,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.videocam, size: 40, color: colors.accentCyan),
+                              const SizedBox(height: 8),
+                              Text(filename, style: TextStyle(color: colors.textMuted, fontSize: 12)),
+                            ],
+                          ),
+                        )
+                      : Image.memory(
+                          bytes,
+                          height: 200,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                        ),
                 ),
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () => setLocal(() => viewOnce = !viewOnce),
-                    child: Text('View once 👁', style: TextStyle(color: colors.textPrimary)),
-                  ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Checkbox(
+                      value: viewOnce,
+                      onChanged: (v) => setLocal(() => viewOnce = v ?? false),
+                      activeColor: colors.accent,
+                    ),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => setLocal(() => viewOnce = !viewOnce),
+                        child: Text('View once', style: TextStyle(color: colors.textPrimary)),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
             actions: [
               TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-              TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Send')),
+              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Send')),
             ],
           ),
         );
@@ -202,8 +288,8 @@ class _ThreadScreenState extends State<ThreadScreen> {
     if (confirmed != true || !mounted) return;
     await context.read<ChatController>().sendAttachmentBytes(
           bytes: bytes,
-          filename: file.name,
-          mimetype: file.mimeType ?? 'image/jpeg',
+          filename: filename,
+          mimetype: mimetype,
           viewOnce: viewOnce,
         );
   }
@@ -218,6 +304,111 @@ class _ThreadScreenState extends State<ThreadScreen> {
           bytes: bytes,
           filename: f.name,
           mimetype: f.extension != null ? 'application/${f.extension}' : 'application/octet-stream',
+        );
+  }
+
+  String _fmtRecordTime(int seconds) {
+    final m = (seconds ~/ 60).toString();
+    final s = (seconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  Future<void> _startVoiceRecording() async {
+    if (_recording || context.read<ChatController>().sending) return;
+    final status = await Permission.microphone.request();
+    if (!status.isGranted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Microphone permission is required for voice notes')),
+        );
+      }
+      return;
+    }
+    try {
+      final dir = await getTemporaryDirectory();
+      final path = '${dir.path}/voice-note-${DateTime.now().millisecondsSinceEpoch}.m4a';
+      await _recorder.start(
+        const RecordConfig(encoder: AudioEncoder.aacLc, bitRate: 128000, sampleRate: 44100),
+        path: path,
+      );
+      if (!mounted) return;
+      setState(() {
+        _recording = true;
+        _recordSeconds = 0;
+        _recordPath = path;
+        _showEmojiPicker = false;
+      });
+      _recordTimer?.cancel();
+      _recordTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+        if (!mounted || !_recording) {
+          t.cancel();
+          return;
+        }
+        setState(() => _recordSeconds++);
+        if (_recordSeconds >= _maxRecordSeconds) {
+          unawaited(_stopAndSendVoice());
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not start recording: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _cancelVoiceRecording() async {
+    _recordTimer?.cancel();
+    _recordTimer = null;
+    try {
+      if (await _recorder.isRecording()) {
+        await _recorder.stop();
+      }
+    } catch (_) {}
+    final path = _recordPath;
+    if (path != null) {
+      try {
+        await File(path).delete();
+      } catch (_) {}
+    }
+    if (mounted) {
+      setState(() {
+        _recording = false;
+        _recordSeconds = 0;
+        _recordPath = null;
+      });
+    }
+  }
+
+  Future<void> _stopAndSendVoice() async {
+    if (!_recording) return;
+    _recordTimer?.cancel();
+    _recordTimer = null;
+    String? path;
+    try {
+      path = await _recorder.stop();
+    } catch (_) {
+      path = _recordPath;
+    }
+    if (!mounted) return;
+    setState(() {
+      _recording = false;
+      _recordSeconds = 0;
+      _recordPath = null;
+    });
+    if (path == null || path.isEmpty) return;
+    final file = File(path);
+    if (!await file.exists()) return;
+    final bytes = await file.readAsBytes();
+    try {
+      await file.delete();
+    } catch (_) {}
+    if (bytes.isEmpty || !mounted) return;
+    await context.read<ChatController>().sendAttachmentBytes(
+          bytes: bytes,
+          filename: 'voice-note-${DateTime.now().millisecondsSinceEpoch}.m4a',
+          mimetype: 'audio/m4a',
         );
   }
 
@@ -250,6 +441,14 @@ class _ThreadScreenState extends State<ThreadScreen> {
               onTap: () {
                 Navigator.pop(ctx);
                 _pickImage(ImageSource.gallery);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.videocam_outlined),
+              title: const Text('Video'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickVideo();
               },
             ),
             ListTile(
@@ -562,11 +761,21 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 },
               ),
             ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Shared media'),
+              onTap: () {
+                Navigator.pop(ctx);
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const ChatMediaScreen()));
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.delete_sweep_outlined),
               title: const Text('Clear chat'),
               onTap: () async {
                 Navigator.pop(ctx);
-                await chat.clearSelectedChat();
+                final scopes = await showClearChatSheet(context, colors: colors);
+                if (scopes == null || scopes.isEmpty || !mounted) return;
+                await chat.clearSelectedChat(scopes: scopes);
               },
             ),
             if (conv.type == ConversationType.dm && !conv.isSelfChat)
@@ -897,67 +1106,130 @@ class _ThreadScreenState extends State<ThreadScreen> {
                   border: Border(top: BorderSide(color: colors.border.withValues(alpha: scenic ? 0.45 : 1))),
                 ),
                 padding: const EdgeInsets.fromLTRB(6, 8, 10, 10),
-                child: Row(
-                  children: [
-                    IconButton(
-                      onPressed: chat.sending ? null : _attachSheet,
-                      icon: Icon(Icons.add_circle_outline, color: colors.accent),
-                    ),
-                    IconButton(
-                      onPressed: () {
-                        setState(() {
-                          _showEmojiPicker = !_showEmojiPicker;
-                          if (_showEmojiPicker) {
-                            _composerFocus.unfocus();
-                          } else {
-                            _composerFocus.requestFocus();
-                          }
-                        });
-                      },
-                      icon: Icon(
-                        _showEmojiPicker ? Icons.keyboard_outlined : Icons.emoji_emotions_outlined,
-                        color: colors.accent,
+                child: _recording
+                    ? Row(
+                        children: [
+                          IconButton(
+                            tooltip: 'Cancel',
+                            onPressed: _cancelVoiceRecording,
+                            icon: Icon(Icons.close, color: colors.error),
+                          ),
+                          Expanded(
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Container(
+                                  width: 10,
+                                  height: 10,
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFFE11D48),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Text(
+                                  _fmtRecordTime(_recordSeconds),
+                                  style: TextStyle(
+                                    color: colors.textPrimary,
+                                    fontWeight: FontWeight.w700,
+                                    fontFeatures: const [FontFeature.tabularFigures()],
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  _recordSeconds >= _maxRecordSeconds - 5 ? 'Sending…' : 'Recording…',
+                                  style: TextStyle(color: colors.textMuted, fontSize: 13),
+                                ),
+                              ],
+                            ),
+                          ),
+                          CircleAvatar(
+                            backgroundColor: colors.accent,
+                            child: IconButton(
+                              tooltip: 'Send voice note',
+                              onPressed: chat.sending ? null : _stopAndSendVoice,
+                              icon: Icon(Icons.send, color: colors.bubbleMineFg, size: 18),
+                            ),
+                          ),
+                        ],
+                      )
+                    : Row(
+                        children: [
+                          IconButton(
+                            onPressed: chat.sending ? null : _attachSheet,
+                            icon: Icon(Icons.add_circle_outline, color: colors.accent),
+                          ),
+                          IconButton(
+                            onPressed: () {
+                              setState(() {
+                                _showEmojiPicker = !_showEmojiPicker;
+                                if (_showEmojiPicker) {
+                                  _composerFocus.unfocus();
+                                } else {
+                                  _composerFocus.requestFocus();
+                                }
+                              });
+                            },
+                            icon: Icon(
+                              _showEmojiPicker ? Icons.keyboard_outlined : Icons.emoji_emotions_outlined,
+                              color: colors.accent,
+                            ),
+                          ),
+                          Expanded(
+                            child: CompositedTransformTarget(
+                              link: _composerLayerLink,
+                              child: TextField(
+                                controller: composer,
+                                focusNode: _composerFocus,
+                                minLines: 1,
+                                maxLines: 5,
+                                onChanged: (v) {
+                                  _onComposerChangedWithMentions(v, chat);
+                                  setState(() {});
+                                },
+                                onSubmitted: (_) => _send(),
+                                onTap: () {
+                                  _removeMentionOverlay();
+                                  if (_showEmojiPicker) setState(() => _showEmojiPicker = false);
+                                },
+                                decoration: InputDecoration(
+                                  hintText: chat.editing != null ? 'Edit message…' : 'Encrypted message…',
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          CircleAvatar(
+                            backgroundColor: colors.accent,
+                            child: IconButton(
+                              tooltip: composer.text.trim().isEmpty && chat.editing == null
+                                  ? 'Record voice note'
+                                  : 'Send',
+                              onPressed: chat.sending
+                                  ? null
+                                  : (composer.text.trim().isEmpty && chat.editing == null
+                                      ? _startVoiceRecording
+                                      : _send),
+                              icon: chat.sending
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                    )
+                                  : Icon(
+                                      composer.text.trim().isEmpty && chat.editing == null
+                                          ? Icons.mic
+                                          : Icons.send,
+                                      color: colors.bubbleMineFg,
+                                      size: 18,
+                                    ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                    Expanded(
-                      child: CompositedTransformTarget(
-                        link: _composerLayerLink,
-                        child: TextField(
-                        controller: composer,
-                        focusNode: _composerFocus,
-                        minLines: 1,
-                        maxLines: 5,
-                        onChanged: (v) => _onComposerChangedWithMentions(v, chat),
-                        onSubmitted: (_) => _send(),
-                        onTap: () {
-                          _removeMentionOverlay();
-                          if (_showEmojiPicker) setState(() => _showEmojiPicker = false);
-                        },
-                        decoration: InputDecoration(
-                          hintText: chat.editing != null ? 'Edit message…' : 'Encrypted message…',
-                        ),
-                      ),
-                    ),
-                    ),
-                    const SizedBox(width: 4),
-                    CircleAvatar(
-                      backgroundColor: colors.accent,
-                      child: IconButton(
-                        onPressed: chat.sending ? null : _send,
-                        icon: chat.sending
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                              )
-                            : Icon(Icons.send, color: colors.bubbleMineFg, size: 18),
-                      ),
-                    ),
-                  ],
-                ),
               ),
             ),
-            if (_showEmojiPicker)
+            if (_showEmojiPicker && !_recording)
               EmojiPickerWidget(
                 colors: colors,
                 onEmojiSelected: (emoji) {
@@ -1276,8 +1548,9 @@ class _MessageBubble extends StatelessWidget {
                             else if (message.text != null && message.attachment == null)
                               Align(
                                 alignment: Alignment.centerLeft,
-                                child: _MentionRichText(
+                                child: LinkifiedText(
                                   text: message.text!,
+                                  colors: colors,
                                   baseStyle: TextStyle(
                                     color: mine ? colors.bubbleMineFg : colors.bubbleTheirsFg,
                                     height: 1.35,
@@ -1382,37 +1655,6 @@ class _MessageBubble extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-/// Renders text with @mention highlights, matching the web's `MentionText`.
-class _MentionRichText extends StatelessWidget {
-  const _MentionRichText({
-    required this.text,
-    required this.baseStyle,
-    required this.mentionStyle,
-  });
-
-  final String text;
-  final TextStyle baseStyle;
-  final TextStyle mentionStyle;
-
-  @override
-  Widget build(BuildContext context) {
-    final re = RegExp(r'(@[a-zA-Z0-9_.-]{2,32})');
-    final spans = <TextSpan>[];
-    int lastEnd = 0;
-    for (final match in re.allMatches(text)) {
-      if (match.start > lastEnd) {
-        spans.add(TextSpan(text: text.substring(lastEnd, match.start)));
-      }
-      spans.add(TextSpan(text: match.group(0), style: mentionStyle));
-      lastEnd = match.end;
-    }
-    if (lastEnd < text.length) {
-      spans.add(TextSpan(text: text.substring(lastEnd)));
-    }
-    return RichText(text: TextSpan(style: baseStyle, children: spans));
   }
 }
 

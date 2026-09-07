@@ -10,6 +10,7 @@ import '../widgets/stories_rail.dart';
 import '../widgets/theme_scene.dart';
 import 'new_chat_screen.dart';
 import 'join_group_screen.dart';
+import 'discover_groups_screen.dart';
 import 'settings_screen.dart';
 import 'thread_screen.dart';
 import 'user_profile_screen.dart';
@@ -84,6 +85,11 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
             tooltip: 'New chat',
             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const NewChatScreen())),
             icon: const Icon(Icons.person_add_alt_1_outlined),
+          ),
+          IconButton(
+            tooltip: 'Discover groups',
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DiscoverGroupsScreen())),
+            icon: const Icon(Icons.travel_explore_outlined),
           ),
           IconButton(
             tooltip: 'Join group',

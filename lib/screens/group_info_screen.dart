@@ -26,6 +26,8 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
   QcGroup? group;
   bool loading = true;
   String? error;
+  List<GroupJoinRequest> joinRequests = [];
+  bool loadingRequests = false;
 
   @override
   void initState() {
@@ -43,10 +45,29 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
       if (!mounted) return;
       setState(() => group = g);
       await context.read<ChatController>().refreshGroup(widget.groupId);
+      await _loadJoinRequests();
     } catch (e) {
       setState(() => error = '$e');
     } finally {
       if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> _loadJoinRequests() async {
+    final g = group;
+    final me = context.read<AuthController>().user;
+    if (g == null || me == null) return;
+    if (!g.isPublic || g.joinPolicy != 'request') return;
+    if (!_isAdmin(me)) return;
+    setState(() => loadingRequests = true);
+    try {
+      final list = await context.read<AuthController>().api.listJoinRequests(widget.groupId);
+      if (!mounted) return;
+      setState(() => joinRequests = list);
+    } catch (_) {
+      if (mounted) setState(() => joinRequests = []);
+    } finally {
+      if (mounted) setState(() => loadingRequests = false);
     }
   }
 
@@ -297,6 +318,70 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
     await _removeMember(me);
   }
 
+  Future<void> _acceptJoinRequest(GroupJoinRequest req) async {
+    try {
+      await context.read<AuthController>().api.acceptJoinRequest(widget.groupId, req.user.id);
+      await _load();
+      _snack('Accepted @${req.user.username}');
+    } catch (e) {
+      _snack('$e');
+    }
+  }
+
+  Future<void> _rejectJoinRequest(GroupJoinRequest req) async {
+    try {
+      await context.read<AuthController>().api.rejectJoinRequest(widget.groupId, req.user.id);
+      if (!mounted) return;
+      setState(() => joinRequests = joinRequests.where((r) => r.id != req.id).toList());
+      _snack('Rejected @${req.user.username}');
+    } catch (e) {
+      _snack('$e');
+    }
+  }
+
+  Widget _joinRequestsSection(QcColors colors) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Join requests', style: TextStyle(color: colors.accentCyan, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 8),
+        if (loadingRequests)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Center(child: SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))),
+          )
+        else if (joinRequests.isEmpty)
+          Text('No pending requests', style: TextStyle(color: colors.textMuted, fontSize: 13))
+        else
+          ...joinRequests.map((req) {
+            final u = req.user;
+            return ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: UserAvatar(name: u.title, userId: u.id, hasAvatar: u.hasAvatar),
+              title: Text(u.title, style: TextStyle(color: colors.textPrimary)),
+              subtitle: Text('@${u.username}', style: TextStyle(color: colors.textMuted)),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: 'Accept',
+                    onPressed: () => _acceptJoinRequest(req),
+                    icon: Icon(Icons.check_circle_outline, color: colors.accentCyan),
+                  ),
+                  IconButton(
+                    tooltip: 'Reject',
+                    onPressed: () => _rejectJoinRequest(req),
+                    icon: Icon(Icons.cancel_outlined, color: colors.error),
+                  ),
+                ],
+              ),
+            );
+          }),
+        const SizedBox(height: 16),
+      ],
+    );
+  }
+
   Widget _inviteLinkSection(QcColors colors) {
     final g = group!;
     final enabled = g.inviteEnabled && g.inviteCode != null && g.inviteCode!.isNotEmpty;
@@ -437,6 +522,7 @@ class _GroupInfoScreenState extends State<GroupInfoScreen> {
                           ),
                         ),
                         const SizedBox(height: 16),
+                        if (admin && g.isPublic && g.joinPolicy == 'request') _joinRequestsSection(colors),
                         if (admin) _inviteLinkSection(colors),
                         if (admin)
                           QcPrimaryButton(label: 'Add member', onPressed: _addMember),
