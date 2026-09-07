@@ -6,6 +6,8 @@ class PrivacySettings {
     this.whoCanMessage = 'everyone',
     this.discoverable = 'everyone',
     this.story = 'everyone',
+    this.birthdayVisibility = 'everyone',
+    this.screenshotProtection = false,
   });
 
   final String lastSeen;
@@ -14,6 +16,8 @@ class PrivacySettings {
   final String whoCanMessage;
   final String discoverable;
   final String story;
+  final String birthdayVisibility;
+  final bool screenshotProtection;
 
   factory PrivacySettings.fromJson(Map<String, dynamic>? json) {
     if (json == null) return const PrivacySettings();
@@ -26,6 +30,8 @@ class PrivacySettings {
       whoCanMessage: json['whoCanMessage'] as String? ?? 'everyone',
       discoverable: json['discoverable'] as String? ?? 'everyone',
       story: json['story'] as String? ?? 'everyone',
+      birthdayVisibility: json['birthdayVisibility'] as String? ?? 'everyone',
+      screenshotProtection: json['screenshotProtection'] == true,
     );
   }
 }
@@ -50,6 +56,11 @@ class QcUser {
     this.friends = const [],
     this.totpEnabled = false,
     this.statusText = '',
+    this.dateOfBirth,
+    this.timezone = 'UTC',
+    this.transliteratedNames = const {},
+    this.birthday,
+    this.birthdayLocked = false,
   });
 
   final String id;
@@ -70,6 +81,13 @@ class QcUser {
   final List<String> friends;
   final bool totpEnabled;
   final String statusText;
+  /// Own profile only (toSelfJSON).
+  final DateTime? dateOfBirth;
+  final String timezone;
+  final Map<String, String> transliteratedNames;
+  /// Visible birthday for other profiles when privacy allows.
+  final DateTime? birthday;
+  final bool birthdayLocked;
 
   String get title => displayName.isNotEmpty ? displayName : username;
 
@@ -80,6 +98,24 @@ class QcUser {
     final rawLogin = json['lastLoginAt'];
     if (rawLogin is String && rawLogin.isNotEmpty) {
       lastLogin = DateTime.tryParse(rawLogin);
+    }
+    DateTime? dob;
+    final rawDob = json['dateOfBirth'] ?? json['birthday'];
+    if (rawDob is String && rawDob.isNotEmpty) {
+      dob = DateTime.tryParse(rawDob);
+    }
+    DateTime? birthday;
+    final rawBirthday = json['birthday'];
+    if (rawBirthday is String && rawBirthday.isNotEmpty) {
+      birthday = DateTime.tryParse(rawBirthday);
+    }
+    final translitRaw = json['transliteratedNames'];
+    final translit = <String, String>{};
+    if (translitRaw is Map) {
+      for (final e in translitRaw.entries) {
+        final v = e.value?.toString().trim() ?? '';
+        if (v.isNotEmpty) translit['${e.key}'] = v;
+      }
     }
     return QcUser(
       id: '${json['id'] ?? json['_id']}',
@@ -105,6 +141,11 @@ class QcUser {
       friends: (json['friends'] as List<dynamic>? ?? []).map((e) => '$e').toList(),
       totpEnabled: json['totpEnabled'] == true,
       statusText: json['statusText'] as String? ?? '',
+      dateOfBirth: dob,
+      timezone: json['timezone'] as String? ?? 'UTC',
+      transliteratedNames: translit,
+      birthday: birthday ?? dob,
+      birthdayLocked: json['birthdayLocked'] == true,
     );
   }
 
@@ -126,6 +167,8 @@ class QcUser {
           'whoCanMessage': privacy.whoCanMessage,
           'discoverable': privacy.discoverable,
           'story': privacy.story,
+          'birthdayVisibility': privacy.birthdayVisibility,
+          'screenshotProtection': privacy.screenshotProtection,
         },
         'isSystemUser': isSystemUser,
         'systemRole': systemRole,
@@ -134,6 +177,11 @@ class QcUser {
         'friends': friends,
         'totpEnabled': totpEnabled,
         'statusText': statusText,
+        'dateOfBirth': dateOfBirth?.toIso8601String(),
+        'timezone': timezone,
+        'transliteratedNames': transliteratedNames,
+        'birthday': birthday?.toIso8601String(),
+        'birthdayLocked': birthdayLocked,
       };
 
   QcUser copyWith({
@@ -144,6 +192,9 @@ class QcUser {
     bool? emailVerified,
     PrivacySettings? privacy,
     String? statusText,
+    DateTime? dateOfBirth,
+    String? timezone,
+    Map<String, String>? transliteratedNames,
   }) {
     return QcUser(
       id: id,
@@ -164,6 +215,11 @@ class QcUser {
       friends: friends,
       totpEnabled: totpEnabled,
       statusText: statusText ?? this.statusText,
+      dateOfBirth: dateOfBirth ?? this.dateOfBirth,
+      timezone: timezone ?? this.timezone,
+      transliteratedNames: transliteratedNames ?? this.transliteratedNames,
+      birthday: birthday,
+      birthdayLocked: birthdayLocked,
     );
   }
 }
@@ -350,11 +406,19 @@ class AttachmentMeta {
 
   bool get isImage => mimetype.startsWith('image/');
   bool get isGif => mimetype == 'image/gif' || filename.toLowerCase().endsWith('.gif');
+  bool get isVideo => mimetype.startsWith('video/');
   bool get isAudio {
     final name = filename.toLowerCase();
     return mimetype.startsWith('audio/') ||
         name.startsWith('voice-note') ||
         RegExp(r'\.(webm|ogg|mp3|m4a|wav|aac)$').hasMatch(name);
+  }
+
+  String get inferredMediaCategory {
+    if (isAudio) return 'voice';
+    if (isImage) return 'photo';
+    if (isVideo) return 'video';
+    return 'document';
   }
 
   factory AttachmentMeta.fromJson(Map<String, dynamic>? json, {String? groupKey, String? groupNonce}) {
@@ -558,6 +622,7 @@ class ChatMessage {
     this.pollVotes = const [],
     this.eventData,
     this.announcementBody,
+    this.mediaCategory,
   });
 
   final String id;
@@ -589,6 +654,8 @@ class ChatMessage {
   List<PollVote> pollVotes;
   EventData? eventData;
   String? announcementBody;
+  /// Server mediaCategory: photo | video | voice | document
+  final String? mediaCategory;
 
   bool isMine(String myId) => from == myId;
   bool get hasMedia => attachment != null || kind == 'file' || kind == 'image' || kind == 'gif';
@@ -596,6 +663,20 @@ class ChatMessage {
   bool get isPoll => kind == 'poll' || pollData != null;
   bool get isEvent => kind == 'event' || eventData != null;
   bool get isAnnouncement => kind == 'announcement' || announcementBody != null;
+
+  String? get effectiveMediaCategory {
+    if (mediaCategory != null && mediaCategory!.isNotEmpty) return mediaCategory;
+    return attachment?.inferredMediaCategory;
+  }
+
+  bool matchesClearScope(String scope) {
+    if (scope == 'all') return true;
+    if (scope == 'starred') return isStarred;
+    final category = effectiveMediaCategory;
+    final hasAttachment = attachment != null;
+    if (scope == 'text') return category == null && !hasAttachment;
+    return category == scope;
+  }
 }
 
 enum ConversationType { dm, group }

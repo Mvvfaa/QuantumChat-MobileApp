@@ -222,6 +222,15 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                         Center(
                           child: Text('@${u.username}', style: TextStyle(color: colors.textMuted, fontSize: 14)),
                         ),
+                        if (u.birthday != null && !u.birthdayLocked) ...[
+                          const SizedBox(height: 8),
+                          Center(
+                            child: Text(
+                              '🎂 ${u.birthday!.month.toString().padLeft(2, '0')}/${u.birthday!.day.toString().padLeft(2, '0')}',
+                              style: TextStyle(color: colors.textSecondary, fontSize: 13),
+                            ),
+                          ),
+                        ],
                         if (u.bio.isNotEmpty) ...[
                           const SizedBox(height: 12),
                           Center(

@@ -11,23 +11,29 @@ Native Flutter messenger for Android and iOS. It talks to the same QuantumChat b
 - Encrypted DMs and group chats, realtime Socket.IO, typing, read/delivery ticks
 - Forward, pin, star, date separators, message info (DM timestamps + group delivered/read per member), edit history
 - Reactions, reply, edit, delete, copy, in-thread message search, emoji picker, @mentions
+- Clickable links, emails, and phone numbers in messages
 - View-once media and disappearing messages
-- Attachments (gallery / camera / files) via init→upload→finalize (same as web)
+- Attachments (gallery / camera / video / files) with send preview; chat shared-media gallery
+- Voice notes (record, send, playback)
 - GIF picker (backend Giphy proxy)
-- Mute, clear chat, block / unblock, report user
+- Mute, selective clear chat (photos / videos / voice / docs / text / starred), block / unblock, report user
 - Stories rail (post image story, view, react, delete)
-- Status text and user profiles
-- Group info: edit name/description, admin promote/demote, group photo, members, add/remove, leave with confirmation, join via invite code, admin invite-link enable/disable/rotate/copy/share
-- Settings: profile, avatar upload + remove photo, privacy, password, 2FA, notification prefs, wallpapers, active sessions, language selector, themes (Dark / Light / Eyecare + dreamy FX), API URL, logout
+- Status text and user profiles (including visible birthday when allowed)
+- Discover public groups + join / request; join via invite code
+- Group info: edit name/description, admin promote/demote, group photo, members, add/remove, leave with confirmation
+- Group invite-link admin (enable / disable / rotate / copy / share)
+- Group polls, events, announcements (create + vote)
+- Settings: profile, avatar upload + remove, date of birth, timezone, transliterated names, privacy (incl. birthday visibility + screenshot protection), password, 2FA, notification prefs, wallpapers, active sessions, language selector, themes (Dark / Light / Eyecare + dreamy FX), API URL, logout
 
 ## Not in this cut yet (website has them)
 
 - Voice / video calls and meetings (WebRTC)
 - Conversation vault / key vault
 - Native push (FCM / APNs) — backend push today is web VAPID-oriented
-- QuantumAI, polls / events, activity / screen time
+- QuantumAI and activity / screen time
 - Device linking QR
-- Sealed (AES-GCM) stories — mobile posts unsealed image stories for now
+- Per-chat theme presets from `/chat-themes`
+- Text / scheduled / draft / sealed (AES-GCM) stories — mobile posts unsealed image stories for now
 - Full i18n string catalogs (language preference is stored; UI strings are still English)
 
 ## Prerequisites

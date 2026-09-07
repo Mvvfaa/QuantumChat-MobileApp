@@ -9,6 +9,7 @@ import '../state/chat_controller.dart';
 import '../state/theme_controller.dart';
 import '../theme/qc_app_icons.dart';
 import '../theme/qc_theme.dart';
+import '../utils/timezones.dart';
 import '../widgets/avatar_cache.dart';
 import '../widgets/common.dart';
 import 'notification_settings_screen.dart';
@@ -32,6 +33,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final newPassword = TextEditingController();
   final totpCode = TextEditingController();
   final disablePassword = TextEditingController();
+  late final translitUr = TextEditingController();
+  late final translitAr = TextEditingController();
+  late final translitHi = TextEditingController();
+  late final translitRu = TextEditingController();
+  late final translitZh = TextEditingController();
+  late final translitFa = TextEditingController();
+  DateTime? dateOfBirth;
+  String timezone = 'UTC';
   String? status;
   String? setupSecret;
   String? setupOtpauth;
@@ -40,6 +49,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
+    final user = context.read<AuthController>().user;
+    dateOfBirth = user?.dateOfBirth;
+    timezone = user?.timezone ?? pickDefaultTimezone();
+    translitUr.text = user?.transliteratedNames['ur'] ?? '';
+    translitAr.text = user?.transliteratedNames['ar'] ?? '';
+    translitHi.text = user?.transliteratedNames['hi'] ?? '';
+    translitRu.text = user?.transliteratedNames['ru'] ?? '';
+    translitZh.text = user?.transliteratedNames['zh'] ?? '';
+    translitFa.text = user?.transliteratedNames['fa'] ?? '';
     _loadBlocked();
   }
 
@@ -47,11 +65,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void dispose() {
     displayName.dispose();
     bio.dispose();
+    statusText.dispose();
     apiBase.dispose();
     currentPassword.dispose();
     newPassword.dispose();
     totpCode.dispose();
     disablePassword.dispose();
+    translitUr.dispose();
+    translitAr.dispose();
+    translitHi.dispose();
+    translitRu.dispose();
+    translitZh.dispose();
+    translitFa.dispose();
     super.dispose();
   }
 
@@ -117,6 +142,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'displayName': displayName.text.trim(),
         'bio': bio.text.trim(),
         'statusText': statusText.text.trim(),
+        'dateOfBirth': dateOfBirth == null
+            ? ''
+            : '${dateOfBirth!.year.toString().padLeft(4, '0')}-'
+                '${dateOfBirth!.month.toString().padLeft(2, '0')}-'
+                '${dateOfBirth!.day.toString().padLeft(2, '0')}',
+        'timezone': timezone,
+        'transliteratedNames': {
+          'ur': translitUr.text.trim(),
+          'ar': translitAr.text.trim(),
+          'fa': translitFa.text.trim(),
+          'hi': translitHi.text.trim(),
+          'zh': translitZh.text.trim(),
+          'ru': translitRu.text.trim(),
+        },
       });
       auth.updateUser(updated);
       setState(() => status = 'Profile saved');
@@ -125,11 +164,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _savePrivacy(String field, String value) async {
+  Future<void> _pickDob() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: dateOfBirth ?? DateTime(now.year - 18, now.month, now.day),
+      firstDate: DateTime(1900),
+      lastDate: now,
+    );
+    if (picked != null) setState(() => dateOfBirth = picked);
+  }
+
+  Future<void> _savePrivacy(String field, dynamic value) async {
     final auth = context.read<AuthController>();
     try {
       final updated = await auth.api.updatePrivacy({field: value});
       auth.updateUser(updated);
+      setState(() {});
     } on ApiException catch (e) {
       setState(() => status = e.message);
     }
@@ -284,6 +335,66 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 10),
           TextField(controller: statusText, decoration: const InputDecoration(hintText: 'Status (e.g. Available, Busy…)')),
           const SizedBox(height: 10),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text('Date of birth', style: TextStyle(color: colors.textPrimary)),
+            subtitle: Text(
+              dateOfBirth == null
+                  ? 'Not set — used for birthday reminders'
+                  : '${dateOfBirth!.year}-${dateOfBirth!.month.toString().padLeft(2, '0')}-${dateOfBirth!.day.toString().padLeft(2, '0')}',
+              style: TextStyle(color: colors.textMuted),
+            ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (dateOfBirth != null)
+                  IconButton(
+                    icon: Icon(Icons.clear, color: colors.textMuted),
+                    onPressed: () => setState(() => dateOfBirth = null),
+                  ),
+                IconButton(
+                  icon: Icon(Icons.calendar_today, color: colors.accent),
+                  onPressed: _pickDob,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
+          InputDecorator(
+            decoration: const InputDecoration(labelText: 'Timezone'),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                isExpanded: true,
+                value: timezoneOptions.contains(timezone) ? timezone : 'UTC',
+                items: timezoneOptions
+                    .map((tz) => DropdownMenuItem(value: tz, child: Text(tz, overflow: TextOverflow.ellipsis)))
+                    .toList(),
+                onChanged: (v) {
+                  if (v != null) setState(() => timezone = v);
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text('Name in other scripts', style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          Text(
+            'Shown when friends use Urdu, Arabic, Hindi, etc.',
+            style: TextStyle(color: colors.textMuted, fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          TextField(controller: translitUr, decoration: const InputDecoration(hintText: 'Urdu name')),
+          const SizedBox(height: 8),
+          TextField(controller: translitAr, decoration: const InputDecoration(hintText: 'Arabic name')),
+          const SizedBox(height: 8),
+          TextField(controller: translitFa, decoration: const InputDecoration(hintText: 'Persian name')),
+          const SizedBox(height: 8),
+          TextField(controller: translitHi, decoration: const InputDecoration(hintText: 'Hindi name')),
+          const SizedBox(height: 8),
+          TextField(controller: translitZh, decoration: const InputDecoration(hintText: 'Chinese name')),
+          const SizedBox(height: 8),
+          TextField(controller: translitRu, decoration: const InputDecoration(hintText: 'Russian name')),
+          const SizedBox(height: 10),
           QcPrimaryButton(label: 'Save profile', onPressed: _saveProfile),
           const SizedBox(height: 24),
           _Section(title: 'Appearance', colors: colors),
@@ -358,6 +469,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: user.privacy.story,
             onChanged: (v) => _savePrivacy('story', v),
             colors: colors,
+          ),
+          _PrivacyTile(
+            label: 'Birthday visibility',
+            value: user.privacy.birthdayVisibility,
+            onChanged: (v) => _savePrivacy('birthdayVisibility', v),
+            colors: colors,
+            options: const ['everyone', 'friends', 'onlyMe'],
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text('Screenshot protection', style: TextStyle(color: colors.textPrimary)),
+            subtitle: Text(
+              'When on, other people cannot screenshot chats with you (Android).',
+              style: TextStyle(color: colors.textMuted, fontSize: 12),
+            ),
+            value: user.privacy.screenshotProtection,
+            activeThumbColor: colors.accent,
+            onChanged: (v) => _savePrivacy('screenshotProtection', v),
           ),
           const SizedBox(height: 24),
           _Section(title: 'Blocked users', colors: colors),
@@ -889,23 +1018,24 @@ class _PrivacyTile extends StatelessWidget {
     required this.value,
     required this.onChanged,
     required this.colors,
+    this.options = const ['everyone', 'friends', 'nobody'],
   });
 
   final String label;
   final String value;
   final ValueChanged<String> onChanged;
   final QcColors colors;
+  final List<String> options;
 
   @override
   Widget build(BuildContext context) {
-    const options = ['everyone', 'friends', 'nobody'];
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
         children: [
           Expanded(child: Text(label, style: TextStyle(color: colors.textPrimary))),
           DropdownButton<String>(
-            value: options.contains(value) ? value : 'everyone',
+            value: options.contains(value) ? value : options.first,
             dropdownColor: colors.elevated,
             underline: const SizedBox.shrink(),
             items: options
