@@ -31,10 +31,14 @@ import '../widgets/message_actions_sheet.dart';
 import '../widgets/message_info_sheet.dart';
 import '../widgets/theme_scene.dart';
 import '../crypto/key_storage.dart';
+import '../utils/linkify.dart';
 import 'chat_media_screen.dart';
+import 'chat_theme_screen.dart';
 import 'group_info_screen.dart';
 import 'user_profile_screen.dart';
 import 'wallpaper_screen.dart';
+
+enum _SearchMediaFilter { all, photos, videos, voice, files, links }
 
 class ThreadScreen extends StatefulWidget {
   const ThreadScreen({super.key});
@@ -49,11 +53,16 @@ class _ThreadScreenState extends State<ThreadScreen> {
   final searchCtrl = TextEditingController();
   bool searching = false;
   String searchQuery = '';
+  _SearchMediaFilter searchFilter = _SearchMediaFilter.all;
   bool _showEmojiPicker = false;
   final _composerFocus = FocusNode();
   final _composerLayerLink = LayerLink();
   OverlayEntry? _mentionOverlay;
   Timer? _liveRefresh;
+
+  Map<String, dynamic>? _chatTheme;
+  Map<String, dynamic>? _themeCatalog;
+  String? _themeConvKey;
 
   final AudioRecorder _recorder = AudioRecorder();
   bool _recording = false;
@@ -65,15 +74,86 @@ class _ThreadScreenState extends State<ThreadScreen> {
   @override
   void initState() {
     super.initState();
+    // Enter sends (like the website); Shift+Enter keeps a newline.
+    _composerFocus.onKeyEvent = _onComposerKeyEvent;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(context.read<ChatController>().refreshOpenThread());
+      unawaited(_loadChatTheme());
       _syncScreenshotProtection();
     });
     _liveRefresh = Timer.periodic(const Duration(seconds: 2), (_) {
       if (!mounted) return;
       unawaited(context.read<ChatController>().refreshOpenThread());
     });
+  }
+
+  KeyEventResult _onComposerKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final isEnter = event.logicalKey == LogicalKeyboardKey.enter ||
+        event.logicalKey == LogicalKeyboardKey.numpadEnter;
+    if (!isEnter) return KeyEventResult.ignored;
+    if (HardwareKeyboard.instance.isShiftPressed) return KeyEventResult.ignored;
+    unawaited(_send());
+    return KeyEventResult.handled;
+  }
+
+  Future<void> _loadChatTheme() async {
+    final chat = context.read<ChatController>();
+    final api = context.read<AuthController>().api;
+    final conv = chat.selected;
+    if (conv == null) return;
+    try {
+      final catalog = await api.fetchThemeCatalog();
+      Map<String, dynamic> theme;
+      if (conv.type == ConversationType.group) {
+        theme = await api.fetchGroupChatTheme(conv.id);
+      } else if (!conv.isSelfChat) {
+        theme = await api.fetchChatTheme(conv.id);
+      } else {
+        theme = {'bubbleColorId': 'default', 'wallpaperId': 'none'};
+      }
+      if (!mounted) return;
+      setState(() {
+        _themeCatalog = catalog;
+        _chatTheme = theme;
+        _themeConvKey = conv.key;
+      });
+    } catch (_) {
+      // Theme is cosmetic — ignore failures.
+    }
+  }
+
+  Color? _bubbleTintMine() {
+    final id = _chatTheme?['bubbleColorId'] as String?;
+    if (id == null || id == 'default') return null;
+    final colors = _themeCatalog?['bubbleColors'];
+    if (colors is! List) return null;
+    for (final c in colors) {
+      if (c is Map && '${c['id']}' == id) {
+        final hex = '${c['mine'] ?? ''}'.replaceFirst('#', '');
+        final v = int.tryParse(hex, radix: 16);
+        if (v != null) return Color(0xFF000000 | v);
+      }
+    }
+    return null;
+  }
+
+  BoxDecoration? _themeWallpaperDeco() {
+    final id = _chatTheme?['wallpaperId'] as String?;
+    if (id == null || id == 'none' || id == 'custom') return null;
+    // Map catalog wallpaper ids to local solid/gradient fallbacks.
+    const map = <String, String>{
+      'aurora': 'gradient:aurora',
+      'nebula': 'gradient:berry',
+      'circuit': 'gradient:ocean',
+      'floral': 'gradient:sunset',
+      'geometric': 'gradient:emerald',
+      'stardust': 'gradient:aurora',
+      'prism': 'gradient:berry',
+      'quantum-dots': 'solid:#1a1a2e',
+    };
+    return wallpaperDecoration(map[id] ?? 'solid:#16213e');
   }
 
   void _syncScreenshotProtection() {
@@ -183,9 +263,33 @@ class _ThreadScreenState extends State<ThreadScreen> {
   }
 
   List<ChatMessage> _visible(ChatController chat) {
-    if (searchQuery.trim().isEmpty) return chat.messages;
+    var list = chat.messages;
+    if (!searching) return list;
+
     final q = searchQuery.trim().toLowerCase();
-    return chat.messages.where((m) => (m.text ?? '').toLowerCase().contains(q)).toList();
+    if (q.isNotEmpty) {
+      list = list.where((m) => (m.text ?? '').toLowerCase().contains(q)).toList();
+    }
+
+    bool hasUrl(ChatMessage m) {
+      final tokens = linkifyText(m.text);
+      return tokens.any((t) => t.type == 'url');
+    }
+
+    switch (searchFilter) {
+      case _SearchMediaFilter.all:
+        return list;
+      case _SearchMediaFilter.photos:
+        return list.where((m) => m.effectiveMediaCategory == 'photo' || m.attachment?.isImage == true).toList();
+      case _SearchMediaFilter.videos:
+        return list.where((m) => m.effectiveMediaCategory == 'video' || m.attachment?.isVideo == true).toList();
+      case _SearchMediaFilter.voice:
+        return list.where((m) => m.effectiveMediaCategory == 'voice' || m.attachment?.isAudio == true).toList();
+      case _SearchMediaFilter.files:
+        return list.where((m) => m.effectiveMediaCategory == 'document').toList();
+      case _SearchMediaFilter.links:
+        return list.where(hasUrl).toList();
+    }
   }
 
   Future<void> _pickImage(ImageSource source) async {
@@ -768,6 +872,24 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 Navigator.push(context, MaterialPageRoute(builder: (_) => const ChatMediaScreen()));
               },
             ),
+            if (!conv.isSelfChat)
+              ListTile(
+                leading: const Icon(Icons.palette_outlined),
+                title: const Text('Chat theme'),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ChatThemeScreen(
+                        peerId: conv.type == ConversationType.dm ? conv.id : null,
+                        groupId: conv.type == ConversationType.group ? conv.id : null,
+                      ),
+                    ),
+                  );
+                  if (mounted) unawaited(_loadChatTheme());
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.delete_sweep_outlined),
               title: const Text('Clear chat'),
@@ -775,7 +897,32 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 Navigator.pop(ctx);
                 final scopes = await showClearChatSheet(context, colors: colors);
                 if (scopes == null || scopes.isEmpty || !mounted) return;
-                await chat.clearSelectedChat(scopes: scopes);
+                final cleared = await chat.clearSelectedChat(scopes: scopes);
+                if (!mounted || !cleared) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: const Text('Chat cleared'),
+                    action: SnackBarAction(
+                      label: 'Undo',
+                      onPressed: () async {
+                        try {
+                          await chat.undoClearSelectedChat();
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Clear undone')),
+                            );
+                          }
+                        } catch (e) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Could not undo: $e')),
+                            );
+                          }
+                        }
+                      },
+                    ),
+                  ),
+                );
               },
             ),
             if (conv.type == ConversationType.dm && !conv.isSelfChat)
@@ -874,7 +1021,15 @@ class _ThreadScreenState extends State<ThreadScreen> {
       // don't fight user typing mid-edit after first set — only when opening edit
     }
 
-    final wpDeco = wallpaperDecoration(KeyStorage.instance.getWallpaper());
+    if (_themeConvKey != conv.key) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_loadChatTheme());
+      });
+    }
+
+    final themeWp = _themeWallpaperDeco();
+    final wpDeco = themeWp ?? wallpaperDecoration(KeyStorage.instance.getWallpaper());
+    final bubbleTint = _bubbleTintMine();
 
     return Scaffold(
       backgroundColor: scenic ? Colors.transparent : (wpDeco != null ? null : colors.chat),
@@ -959,6 +1114,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 if (!searching) {
                   searchQuery = '';
                   searchCtrl.clear();
+                  searchFilter = _SearchMediaFilter.all;
                 }
               });
             },
@@ -978,6 +1134,34 @@ class _ThreadScreenState extends State<ThreadScreen> {
           child: Column(
           children: [
             if (scenic) SizedBox(height: MediaQuery.of(context).padding.top + kToolbarHeight),
+            if (searching)
+              SizedBox(
+                height: 44,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  children: [
+                    for (final entry in const [
+                      (_SearchMediaFilter.all, 'All'),
+                      (_SearchMediaFilter.photos, 'Photos'),
+                      (_SearchMediaFilter.videos, 'Videos'),
+                      (_SearchMediaFilter.voice, 'Voice'),
+                      (_SearchMediaFilter.files, 'Files'),
+                      (_SearchMediaFilter.links, 'Links'),
+                    ])
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 3),
+                        child: ChoiceChip(
+                          label: Text(entry.$2, style: const TextStyle(fontSize: 12)),
+                          selected: searchFilter == entry.$1,
+                          onSelected: (_) => setState(() => searchFilter = entry.$1),
+                          selectedColor: colors.accent,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
             if (chat.threadError != null)
               Material(
                 color: colors.error.withValues(alpha: 0.12),
@@ -1057,8 +1241,9 @@ class _ThreadScreenState extends State<ThreadScreen> {
                                   senderName: showName ? chat.displayName(m.from) : null,
                                   colors: colors,
                                   scenic: scenic,
-                                  highlight: searchQuery.isNotEmpty,
+                                  highlight: searching && (searchQuery.isNotEmpty || searchFilter != _SearchMediaFilter.all),
                                   currentUserId: chat.me.id,
+                                  bubbleTintMine: bubbleTint,
                                   onOpenActions: () => _messageActions(m),
                                   onVotePoll: (m.isPoll)
                                       ? (idx) => chat.voteOnPoll(m, idx)
@@ -1183,6 +1368,24 @@ class _ThreadScreenState extends State<ThreadScreen> {
                                 focusNode: _composerFocus,
                                 minLines: 1,
                                 maxLines: 5,
+                                keyboardType: TextInputType.multiline,
+                                textInputAction: TextInputAction.send,
+                                inputFormatters: [
+                                  // Soft keyboards insert "\n" on Enter; treat that as Send
+                                  // unless Shift is held (new line), matching the website.
+                                  TextInputFormatter.withFunction((oldValue, newValue) {
+                                    if (HardwareKeyboard.instance.isShiftPressed) {
+                                      return newValue;
+                                    }
+                                    final oldNl = '\n'.allMatches(oldValue.text).length;
+                                    final newNl = '\n'.allMatches(newValue.text).length;
+                                    if (newNl <= oldNl) return newValue;
+                                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                                      if (mounted) unawaited(_send());
+                                    });
+                                    return oldValue;
+                                  }),
+                                ],
                                 onChanged: (v) {
                                   _onComposerChangedWithMentions(v, chat);
                                   setState(() {});
@@ -1435,6 +1638,7 @@ class _MessageBubble extends StatelessWidget {
     required this.currentUserId,
     this.onVotePoll,
     this.highlight = false,
+    this.bubbleTintMine,
   });
 
   final ChatMessage message;
@@ -1447,9 +1651,14 @@ class _MessageBubble extends StatelessWidget {
   final String currentUserId;
   final void Function(int optionIndex)? onVotePoll;
   final bool highlight;
+  final Color? bubbleTintMine;
 
   @override
   Widget build(BuildContext context) {
+    final base = glassBubbleDecoration(mine: mine, colors: colors, scenic: scenic);
+    final tinted = (mine && bubbleTintMine != null)
+        ? base.copyWith(color: scenic ? bubbleTintMine!.withValues(alpha: 0.88) : bubbleTintMine)
+        : base;
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
       child: Material(
@@ -1463,10 +1672,8 @@ class _MessageBubble extends StatelessWidget {
             child: Container(
               margin: const EdgeInsets.symmetric(vertical: 5),
               padding: const EdgeInsets.fromLTRB(12, 8, 8, 6),
-              decoration: glassBubbleDecoration(mine: mine, colors: colors, scenic: scenic).copyWith(
-                border: highlight
-                    ? Border.all(color: colors.accentCyan, width: 1.5)
-                    : glassBubbleDecoration(mine: mine, colors: colors, scenic: scenic).border,
+              decoration: tinted.copyWith(
+                border: highlight ? Border.all(color: colors.accentCyan, width: 1.5) : tinted.border,
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.end,

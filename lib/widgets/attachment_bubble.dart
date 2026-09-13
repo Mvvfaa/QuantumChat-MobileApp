@@ -131,6 +131,8 @@ class _VoicePlayerState extends State<_VoicePlayer> {
   bool _ready = false;
   bool _playing = false;
   String? _tempPath;
+  double _speed = 1.0;
+  static const _speeds = [1.0, 1.5, 2.0];
 
   @override
   void initState() {
@@ -190,6 +192,20 @@ class _VoicePlayerState extends State<_VoicePlayer> {
     }
   }
 
+  Future<void> _cycleSpeed() async {
+    if (!_ready) return;
+    final idx = _speeds.indexOf(_speed);
+    final next = _speeds[(idx + 1) % _speeds.length];
+    await _player.setSpeed(next);
+    if (mounted) setState(() => _speed = next);
+  }
+
+  String get _speedLabel {
+    if (_speed == 1.0) return '1x';
+    if (_speed == 1.5) return '1.5x';
+    return '2x';
+  }
+
   @override
   void dispose() {
     _player.dispose();
@@ -245,6 +261,18 @@ class _VoicePlayerState extends State<_VoicePlayer> {
                   style: TextStyle(color: colors.textMuted, fontSize: 12, fontWeight: FontWeight.w600),
                 ),
               ],
+            ),
+          ),
+          TextButton(
+            onPressed: _ready ? _cycleSpeed : null,
+            style: TextButton.styleFrom(
+              minimumSize: const Size(40, 32),
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              foregroundColor: colors.accentCyan,
+            ),
+            child: Text(
+              _speedLabel,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
             ),
           ),
         ],

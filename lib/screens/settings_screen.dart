@@ -15,6 +15,8 @@ import '../widgets/common.dart';
 import 'notification_settings_screen.dart';
 import 'sessions_screen.dart';
 import 'starred_messages_screen.dart';
+import 'story_archive_screen.dart';
+import 'user_profile_screen.dart';
 import 'wallpaper_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -602,6 +604,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: Text('Notifications', style: TextStyle(color: colors.textPrimary)),
             trailing: Icon(Icons.chevron_right, color: colors.textMuted),
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationSettingsScreen())),
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.person_outline, color: colors.accentCyan),
+            title: Text('My profile & highlights', style: TextStyle(color: colors.textPrimary)),
+            trailing: Icon(Icons.chevron_right, color: colors.textMuted),
+            onTap: () {
+              final id = context.read<AuthController>().user?.id;
+              if (id == null) return;
+              Navigator.push(context, MaterialPageRoute(builder: (_) => UserProfileScreen(userId: id)));
+            },
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.inventory_2_outlined, color: colors.accentCyan),
+            title: Text('Story archive', style: TextStyle(color: colors.textPrimary)),
+            trailing: Icon(Icons.chevron_right, color: colors.textMuted),
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StoryArchiveScreen())),
           ),
           ListTile(
             contentPadding: EdgeInsets.zero,

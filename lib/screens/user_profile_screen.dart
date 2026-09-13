@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -21,6 +23,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   QcUser? user;
   bool loading = true;
   String? error;
+  List<HighlightItem> highlights = [];
 
   @override
   void initState() {
@@ -34,13 +37,27 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       error = null;
     });
     try {
-      final u = await context.read<AuthController>().api.getUser(widget.userId);
-      if (mounted) setState(() => user = u);
+      final api = context.read<AuthController>().api;
+      final u = await api.getUser(widget.userId);
+      List<HighlightItem> hl = [];
+      try {
+        hl = await api.listHighlights(userId: widget.userId);
+      } catch (_) {}
+      if (mounted) {
+        setState(() {
+          user = u;
+          highlights = hl;
+        });
+      }
     } catch (e) {
       if (mounted) setState(() => error = '$e');
     } finally {
       if (mounted) setState(() => loading = false);
     }
+  }
+
+  bool get _isOwn {
+    return context.read<AuthController>().user?.id == widget.userId;
   }
 
   bool get _isFriend {
@@ -252,49 +269,198 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                             ),
                           ),
                         ),
-                        const SizedBox(height: 32),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            _ActionButton(
-                              icon: Icons.message_outlined,
-                              label: 'Message',
-                              color: colors.accent,
-                              onTap: _sendMessage,
+                        if (_isOwn || highlights.isNotEmpty) ...[
+                          const SizedBox(height: 20),
+                          SizedBox(
+                            height: 92,
+                            child: ListView(
+                              scrollDirection: Axis.horizontal,
+                              children: [
+                                if (_isOwn)
+                                  _HighlightRing(
+                                    label: 'New',
+                                    colors: colors,
+                                    isAdd: true,
+                                    onTap: () => _createHighlight(),
+                                  ),
+                                ...highlights.map(
+                                  (h) => _HighlightRing(
+                                    label: h.name,
+                                    colors: colors,
+                                    coverFuture: h.hasCover
+                                        ? context.read<AuthController>().api.getHighlightCover(h.id)
+                                        : null,
+                                    onTap: () {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(content: Text('${h.name} · ${h.itemCount} items')),
+                                      );
+                                    },
+                                    onLongPress: _isOwn
+                                        ? () async {
+                                            final ok = await showDialog<bool>(
+                                              context: context,
+                                              builder: (d) => AlertDialog(
+                                                title: const Text('Delete highlight?'),
+                                                actions: [
+                                                  TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Cancel')),
+                                                  TextButton(onPressed: () => Navigator.pop(d, true), child: const Text('Delete')),
+                                                ],
+                                              ),
+                                            );
+                                            if (ok == true && mounted) {
+                                              try {
+                                                await context.read<AuthController>().api.deleteHighlight(h.id);
+                                                await _load();
+                                              } catch (e) {
+                                                if (mounted) {
+                                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+                                                }
+                                              }
+                                            }
+                                          }
+                                        : null,
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(width: 24),
-                            if (_isFriend)
+                          ),
+                        ],
+                        if (!_isOwn) ...[
+                          const SizedBox(height: 32),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
                               _ActionButton(
-                                icon: Icons.person_remove_outlined,
-                                label: 'Unfriend',
-                                color: colors.error,
-                                onTap: _removeFriend,
-                              )
-                            else
-                              _ActionButton(
-                                icon: Icons.person_add_outlined,
-                                label: 'Add Friend',
-                                color: colors.accentCyan,
-                                onTap: _sendFriendRequest,
+                                icon: Icons.message_outlined,
+                                label: 'Message',
+                                color: colors.accent,
+                                onTap: _sendMessage,
                               ),
-                            const SizedBox(width: 24),
-                            _ActionButton(
-                              icon: _isBlocked ? Icons.lock_open : Icons.block,
-                              label: _isBlocked ? 'Unblock' : 'Block',
-                              color: colors.error,
-                              onTap: _toggleBlock,
-                            ),
-                            const SizedBox(width: 24),
-                            _ActionButton(
-                              icon: Icons.flag_outlined,
-                              label: 'Report',
-                              color: colors.error,
-                              onTap: _reportUser,
-                            ),
-                          ],
-                        ),
+                              const SizedBox(width: 24),
+                              if (_isFriend)
+                                _ActionButton(
+                                  icon: Icons.person_remove_outlined,
+                                  label: 'Unfriend',
+                                  color: colors.error,
+                                  onTap: _removeFriend,
+                                )
+                              else
+                                _ActionButton(
+                                  icon: Icons.person_add_outlined,
+                                  label: 'Add Friend',
+                                  color: colors.accentCyan,
+                                  onTap: _sendFriendRequest,
+                                ),
+                              const SizedBox(width: 24),
+                              _ActionButton(
+                                icon: _isBlocked ? Icons.lock_open : Icons.block,
+                                label: _isBlocked ? 'Unblock' : 'Block',
+                                color: colors.error,
+                                onTap: _toggleBlock,
+                              ),
+                              const SizedBox(width: 24),
+                              _ActionButton(
+                                icon: Icons.flag_outlined,
+                                label: 'Report',
+                                color: colors.error,
+                                onTap: _reportUser,
+                              ),
+                            ],
+                          ),
+                        ],
                       ],
                     ),
+    );
+  }
+
+  Future<void> _createHighlight() async {
+    final nameCtrl = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('New highlight'),
+        content: TextField(controller: nameCtrl, autofocus: true, decoration: const InputDecoration(hintText: 'Name')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, nameCtrl.text.trim()), child: const Text('Create')),
+        ],
+      ),
+    );
+    nameCtrl.dispose();
+    if (name == null || name.isEmpty || !mounted) return;
+    try {
+      await context.read<AuthController>().api.createHighlight(name: name);
+      await _load();
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+}
+
+class _HighlightRing extends StatelessWidget {
+  const _HighlightRing({
+    required this.label,
+    required this.colors,
+    required this.onTap,
+    this.onLongPress,
+    this.coverFuture,
+    this.isAdd = false,
+  });
+
+  final String label;
+  final dynamic colors;
+  final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+  final Future<Uint8List?>? coverFuture;
+  final bool isAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 12),
+      child: InkWell(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        borderRadius: BorderRadius.circular(40),
+        child: Column(
+          children: [
+            Container(
+              width: 58,
+              height: 58,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: colors.accent, width: 2),
+                color: colors.elevated,
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: isAdd
+                  ? Icon(Icons.add, color: colors.accent)
+                  : coverFuture == null
+                      ? Icon(Icons.bookmark_outline, color: colors.accentCyan)
+                      : FutureBuilder<Uint8List?>(
+                          future: coverFuture,
+                          builder: (context, snap) {
+                            if (snap.data == null) {
+                              return Icon(Icons.bookmark_outline, color: colors.accentCyan);
+                            }
+                            return Image.memory(snap.data!, fit: BoxFit.cover);
+                          },
+                        ),
+            ),
+            const SizedBox(height: 6),
+            SizedBox(
+              width: 64,
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: colors.textMuted, fontSize: 11),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

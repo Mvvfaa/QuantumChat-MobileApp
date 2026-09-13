@@ -10,14 +10,18 @@ Native Flutter messenger for Android and iOS. It talks to the same QuantumChat b
 - Friend request accept / decline; friend add / remove from profiles
 - Encrypted DMs and group chats, realtime Socket.IO, typing, read/delivery ticks
 - Forward, pin, star, date separators, message info (DM timestamps + group delivered/read per member), edit history
-- Reactions, reply, edit, delete, copy, in-thread message search, emoji picker, @mentions
+- Reactions, reply, edit, delete, copy, in-thread message search (All / Photos / Videos / Voice / Files / Links), emoji picker, @mentions
 - Clickable links, emails, and phone numbers in messages
 - View-once media and disappearing messages
 - Attachments (gallery / camera / video / files) with send preview; chat shared-media gallery
-- Voice notes (record, send, playback)
+- Voice notes (record, send, playback with 1x / 1.5x / 2x speed)
 - GIF picker (backend Giphy proxy)
-- Mute, selective clear chat (photos / videos / voice / docs / text / starred), block / unblock, report user
-- Stories rail (post image story, view, react, delete)
+- Mute, selective clear chat with Undo, block / unblock, report user
+- Stories rail: photo + text stories (rasterized PNG), drafts / schedule / publish, viewers, archive, reshare
+- Profile highlights (create, save story to highlight, view rings)
+- Per-chat theme presets / bubble colors / wallpapers (`/chat-themes`)
+- Activity hub (friend requests + local activity log)
+- Device linking (host QR via `qr_flutter`; approve via socket) — secondary-device camera scanner not included
 - Status text and user profiles (including visible birthday when allowed)
 - Discover public groups + join / request; join via invite code
 - Group info: edit name/description, admin promote/demote, group photo, members, add/remove, leave with confirmation
@@ -30,11 +34,12 @@ Native Flutter messenger for Android and iOS. It talks to the same QuantumChat b
 - Voice / video calls and meetings (WebRTC)
 - Conversation vault / key vault
 - Native push (FCM / APNs) — backend push today is web VAPID-oriented
-- QuantumAI and activity / screen time
-- Device linking QR
-- Per-chat theme presets from `/chat-themes`
-- Text / scheduled / draft / sealed (AES-GCM) stories — mobile posts unsealed image stories for now
+- QuantumAI
 - Full i18n string catalogs (language preference is stored; UI strings are still English)
+- Sealed AES-GCM stories (mobile posts unsealed image / text-raster stories)
+- Secondary-device QR **scanner** (host QR display only — avoids NDK-heavy `mobile_scanner`; use the web Link Device page to scan)
+- Custom chat wallpaper upload (multipart); presets + bubble/wallpaper ids are supported
+- Full screen-time charts in Activity (simple list + friend requests for now)
 
 ## Prerequisites
 

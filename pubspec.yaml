@@ -37,8 +37,11 @@ dependencies:
   permission_handler: ^11.3.1
   path: ^1.9.0
   url_launcher: ^6.3.2
+  qr_flutter: ^4.1.0
 
 # path_provider_android 2.3.x pulls JNI/NDK. This machine has no NDK installed.
+# record 5.2.x allows record_platform_interface 1.6 which breaks record_linux 0.7.2
+# (missing startStream / hasPermission signature) and fails the Android Dart build.
 dependency_overrides:
   path_provider_android: 2.2.19
   # record 5.2.1 pins record_linux ^0.7.2, but resolves record_platform_interface
