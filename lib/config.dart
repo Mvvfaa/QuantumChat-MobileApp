@@ -9,11 +9,11 @@ class AppConfig {
   static const _defined = String.fromEnvironment('API_URL');
   static const productionFallback = 'https://quantum-chat-backend-six.vercel.app';
 
-  /// Android emulator reaches the host machine at 10.0.2.2.
+  /// Same backend as chat.quantumlogicslimited.com. For a local backend, pass
+  /// `--dart-define=API_URL=http://10.0.2.2:5000` (Android emulator -> host).
   static String get defaultApiBase {
     if (_defined.isNotEmpty) return _defined.replaceAll(RegExp(r'/$'), '');
-    if (!kIsWeb && Platform.isAndroid) return 'http://10.0.2.2:5000';
-    return 'http://localhost:5000';
+    return productionFallback;
   }
 
   static String apiUrl(String base) => '${base.replaceAll(RegExp(r'/$'), '')}/api';
