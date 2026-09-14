@@ -313,6 +313,20 @@ class ApiClient {
     });
   }
 
+  /// Empty [restoreEntries] = full undo of clear watermarks for that chat.
+  Future<Map<String, dynamic>> undoClearChat({
+    String? peerId,
+    String? groupId,
+    List<dynamic> restoreEntries = const [],
+  }) async {
+    final body = await post('/users/me/clear-chat/undo', {
+      if (peerId != null) 'peerId': peerId,
+      if (groupId != null) 'groupId': groupId,
+      'restoreEntries': restoreEntries,
+    });
+    return (body['data'] as Map<String, dynamic>?) ?? {};
+  }
+
   Future<QcUser> uploadAvatar(Uint8List bytes, {String filename = 'avatar.jpg', String mime = 'image/jpeg'}) async {
     final request = http.MultipartRequest('POST', _uri('/users/me/avatar'));
     request.headers.addAll(_headers(json: false));
@@ -492,12 +506,22 @@ class ApiClient {
     required String filename,
     String mimetype = 'image/jpeg',
     String mediaType = 'image',
+    String status = 'published',
+    String? publishAt,
+    String? caption,
+    int? ttlMs,
+    bool allowReplies = true,
   }) async {
     final request = http.MultipartRequest('POST', _uri('/stories'));
     request.headers.addAll(_headers(json: false));
     request.fields['sealed'] = 'false';
     request.fields['mediaType'] = mediaType;
     request.fields['mimetype'] = mimetype;
+    request.fields['status'] = status;
+    request.fields['allowReplies'] = allowReplies ? 'true' : 'false';
+    if (publishAt != null && publishAt.isNotEmpty) request.fields['publishAt'] = publishAt;
+    if (caption != null && caption.isNotEmpty) request.fields['caption'] = caption;
+    if (ttlMs != null) request.fields['ttlMs'] = '$ttlMs';
     request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
     final streamed = await request.send();
     final res = await http.Response.fromStream(streamed);
@@ -513,6 +537,179 @@ class ApiClient {
 
   Future<void> reactToStory(String id, String emoji) async {
     await post('/stories/$id/react', {'emoji': emoji});
+  }
+
+  Future<List<StoryItem>> listStoryDrafts() async {
+    final body = await get('/stories/mine/drafts');
+    final data = body['data'] as List<dynamic>? ?? [];
+    return data.map((e) => StoryItem.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+  }
+
+  Future<List<StoryItem>> listStoryArchive() async {
+    final body = await get('/stories/mine/archive');
+    final data = body['data'] as List<dynamic>? ?? [];
+    return data.map((e) => StoryItem.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+  }
+
+  Future<StoryItem> publishStory(String id) async {
+    final body = await post('/stories/$id/publish');
+    return StoryItem.fromJson(body['data'] as Map<String, dynamic>);
+  }
+
+  Future<StoryItem> updateStory(String id, Map<String, dynamic> payload) async {
+    final body = await patch('/stories/$id', payload);
+    return StoryItem.fromJson(body['data'] as Map<String, dynamic>);
+  }
+
+  Future<List<Map<String, dynamic>>> getStoryViewers(String id) async {
+    final body = await get('/stories/$id/viewers');
+    final data = body['data'];
+    if (data is List) return data.cast<Map<String, dynamic>>();
+    if (data is Map && data['viewers'] is List) {
+      return (data['viewers'] as List).cast<Map<String, dynamic>>();
+    }
+    return [];
+  }
+
+  Future<StoryItem> reshareStory(String id) async {
+    final body = await post('/stories/$id/reshare');
+    return StoryItem.fromJson(body['data'] as Map<String, dynamic>);
+  }
+
+  // ── Chat themes ──
+
+  Future<Map<String, dynamic>> fetchThemeCatalog() async {
+    final body = await get('/chat-themes/presets');
+    return (body['data'] as Map<String, dynamic>?) ?? {};
+  }
+
+  Future<Map<String, dynamic>> fetchChatTheme(String peerId) async {
+    final body = await get('/chat-themes/$peerId');
+    return (body['data'] as Map<String, dynamic>?) ?? {};
+  }
+
+  Future<Map<String, dynamic>> saveChatTheme(String peerId, Map<String, dynamic> payload) async {
+    final body = await put('/chat-themes/$peerId', payload);
+    return (body['data'] as Map<String, dynamic>?) ?? {};
+  }
+
+  Future<Map<String, dynamic>> resetChatTheme(String peerId) async {
+    final body = await delete('/chat-themes/$peerId');
+    return (body['data'] as Map<String, dynamic>?) ?? {};
+  }
+
+  Future<Map<String, dynamic>> fetchGroupChatTheme(String groupId) async {
+    final body = await get('/chat-themes/group/$groupId');
+    return (body['data'] as Map<String, dynamic>?) ?? {};
+  }
+
+  Future<Map<String, dynamic>> saveGroupChatTheme(String groupId, Map<String, dynamic> payload) async {
+    final body = await put('/chat-themes/group/$groupId', payload);
+    return (body['data'] as Map<String, dynamic>?) ?? {};
+  }
+
+  Future<Map<String, dynamic>> resetGroupChatTheme(String groupId) async {
+    final body = await delete('/chat-themes/group/$groupId');
+    return (body['data'] as Map<String, dynamic>?) ?? {};
+  }
+
+  // ── Highlights ──
+
+  Future<List<HighlightItem>> listHighlights({String? userId}) async {
+    final query = <String, String>{};
+    if (userId != null && userId.isNotEmpty) query['userId'] = userId;
+    final body = await get('/highlights', query: query.isEmpty ? null : query);
+    final data = body['data'] as List<dynamic>? ?? [];
+    return data.map((e) => HighlightItem.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+  }
+
+  Future<HighlightItem> createHighlight({required String name}) async {
+    final request = http.MultipartRequest('POST', _uri('/highlights'));
+    request.headers.addAll(_headers(json: false));
+    request.fields['name'] = name;
+    final streamed = await request.send();
+    final res = await http.Response.fromStream(streamed);
+    final body = _decode(res);
+    return HighlightItem.fromJson(body['data'] as Map<String, dynamic>);
+  }
+
+  /// Backend requires a media file; [sourceStoryId] is optional metadata.
+  Future<HighlightItem> addHighlightItem({
+    required String highlightId,
+    required Uint8List bytes,
+    required String filename,
+    String mimetype = 'image/jpeg',
+    String? sourceStoryId,
+    String? caption,
+    String? mediaType,
+  }) async {
+    final request = http.MultipartRequest('POST', _uri('/highlights/$highlightId/items'));
+    request.headers.addAll(_headers(json: false));
+    if (sourceStoryId != null) request.fields['sourceStoryId'] = sourceStoryId;
+    if (caption != null) request.fields['caption'] = caption;
+    if (mediaType != null) request.fields['mediaType'] = mediaType;
+    request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
+    final streamed = await request.send();
+    final res = await http.Response.fromStream(streamed);
+    final body = _decode(res);
+    return HighlightItem.fromJson(body['data'] as Map<String, dynamic>);
+  }
+
+  Future<void> deleteHighlight(String id) async => delete('/highlights/$id');
+
+  Future<Uint8List?> getHighlightCover(String id) async => getBytes('/highlights/$id/cover');
+
+  // ── Device link ──
+
+  Future<Map<String, dynamic>> createDeviceLinkRequest() async {
+    final body = await post('/users/me/sessions/link');
+    return (body['data'] as Map<String, dynamic>?) ?? {};
+  }
+
+  Future<Map<String, dynamic>> approveDeviceLink(String linkId) async {
+    final body = await post('/users/me/sessions/link/approve', {'linkId': linkId});
+    return (body['data'] as Map<String, dynamic>?) ?? {};
+  }
+
+  Future<Map<String, dynamic>> rejectDeviceLink(String linkId) async {
+    final body = await post('/users/me/sessions/link/reject', {'linkId': linkId});
+    return (body['data'] as Map<String, dynamic>?) ?? {};
+  }
+
+  Future<Map<String, dynamic>> sendDeviceLinkEmail({required String linkId, required String token}) async {
+    final body = await post('/users/me/sessions/link/email', {'linkId': linkId, 'token': token});
+    return (body['data'] as Map<String, dynamic>?) ?? {};
+  }
+
+  /// Unauthenticated — new device verifying a scanned QR.
+  Future<Map<String, dynamic>> verifyDeviceLink({
+    required String linkId,
+    required String token,
+    String deviceLabel = 'Mobile',
+  }) async {
+    final body = await post('/users/sessions/link/verify', {
+      'linkId': linkId,
+      'token': token,
+      'deviceLabel': deviceLabel,
+      'deviceInfo': {'userAgent': 'QuantumChat Flutter', 'label': deviceLabel},
+    });
+    return (body['data'] as Map<String, dynamic>?) ?? {};
+  }
+
+  Future<Map<String, dynamic>> pollDeviceLinkStatus({
+    required String linkId,
+    required String token,
+  }) async {
+    final body = await post('/users/sessions/link/status', {'linkId': linkId, 'token': token});
+    return (body['data'] as Map<String, dynamic>?) ?? {};
+  }
+
+  Future<Map<String, dynamic>> claimDeviceLinkSession({
+    required String linkId,
+    required String token,
+  }) async {
+    final body = await post('/users/sessions/link/claim', {'linkId': linkId, 'token': token});
+    return (body['data'] as Map<String, dynamic>?) ?? {};
   }
 
   /// Init → put bytes → finalize (website-compatible attachment upload).

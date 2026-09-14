@@ -278,9 +278,10 @@ class ChatController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> clearSelectedChat({List<String> scopes = const ['all']}) async {
+  /// Returns true when a server clear ran (UI can offer undo).
+  Future<bool> clearSelectedChat({List<String> scopes = const ['all']}) async {
     final conv = selected;
-    if (conv == null) return;
+    if (conv == null) return false;
     final clearingStarred = scopes.contains('starred');
     var serverScopes = scopes.where((s) => s != 'starred').toList();
 
@@ -289,7 +290,7 @@ class ChatController extends ChangeNotifier {
         m.isStarred = false;
       }
       notifyListeners();
-      return;
+      return false;
     }
 
     if (scopes.contains('all') ||
@@ -315,6 +316,18 @@ class ChatController extends ChangeNotifier {
       }
     }
     notifyListeners();
+    return true;
+  }
+
+  Future<void> undoClearSelectedChat() async {
+    final conv = selected;
+    if (conv == null) return;
+    if (conv.type == ConversationType.dm) {
+      await auth.api.undoClearChat(peerId: conv.id, restoreEntries: const []);
+    } else {
+      await auth.api.undoClearChat(groupId: conv.id, restoreEntries: const []);
+    }
+    await refreshOpenThread();
   }
 
   Future<void> toggleArchiveSelected() async {
@@ -1172,8 +1185,28 @@ class ChatController extends ChangeNotifier {
     }
   }
 
-  Future<void> postStory(Uint8List bytes, {String filename = 'story.jpg', String mimetype = 'image/jpeg'}) async {
-    await auth.api.createStory(bytes: bytes, filename: filename, mimetype: mimetype);
+  Future<void> postStory(
+    Uint8List bytes, {
+    String filename = 'story.jpg',
+    String mimetype = 'image/jpeg',
+    String mediaType = 'image',
+    String status = 'published',
+    String? publishAt,
+    String? caption,
+    int? ttlMs,
+    bool allowReplies = true,
+  }) async {
+    await auth.api.createStory(
+      bytes: bytes,
+      filename: filename,
+      mimetype: mimetype,
+      mediaType: mediaType,
+      status: status,
+      publishAt: publishAt,
+      caption: caption,
+      ttlMs: ttlMs,
+      allowReplies: allowReplies,
+    );
     await refreshStories();
   }
 

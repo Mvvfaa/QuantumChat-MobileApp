@@ -5,7 +5,7 @@ import '../crypto/key_storage.dart';
 import '../models/models.dart';
 import '../state/auth_controller.dart';
 import '../state/theme_controller.dart';
-
+import 'device_link_sheet.dart';
 
 class SessionsScreen extends StatefulWidget {
   const SessionsScreen({super.key});
@@ -74,7 +74,23 @@ class _SessionsScreenState extends State<SessionsScreen> {
     final currentSessionId = KeyStorage.instance.getSessionId();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Active Sessions')),
+      appBar: AppBar(
+        title: const Text('Active Sessions'),
+        actions: [
+          TextButton.icon(
+            onPressed: () {
+              showModalBottomSheet<void>(
+                context: context,
+                backgroundColor: colors.surface,
+                isScrollControlled: true,
+                builder: (_) => const DeviceLinkSheet(),
+              );
+            },
+            icon: const Icon(Icons.qr_code_2, size: 18),
+            label: const Text('Link a device'),
+          ),
+        ],
+      ),
       body: loading
           ? const Center(child: CircularProgressIndicator())
           : error != null

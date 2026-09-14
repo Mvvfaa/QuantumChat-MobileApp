@@ -483,6 +483,10 @@ class StoryItem {
     this.createdAt,
     this.expiresAt,
     this.viewed = false,
+    this.status = 'published',
+    this.caption = '',
+    this.publishAt,
+    this.allowReplies = true,
   });
 
   final String id;
@@ -495,6 +499,13 @@ class StoryItem {
   final DateTime? createdAt;
   final DateTime? expiresAt;
   final bool viewed;
+  final String status;
+  final String caption;
+  final DateTime? publishAt;
+  final bool allowReplies;
+
+  bool get isDraft => status == 'draft';
+  bool get isScheduled => status == 'scheduled';
 
   factory StoryItem.fromJson(Map<String, dynamic> json) {
     final user = json['user'];
@@ -519,6 +530,40 @@ class StoryItem {
       createdAt: json['createdAt'] is String ? DateTime.tryParse(json['createdAt'] as String) : null,
       expiresAt: json['expiresAt'] is String ? DateTime.tryParse(json['expiresAt'] as String) : null,
       viewed: json['viewedByMe'] == true || json['viewed'] == true,
+      status: json['status'] as String? ?? 'published',
+      caption: json['caption'] as String? ?? '',
+      publishAt: json['publishAt'] is String ? DateTime.tryParse(json['publishAt'] as String) : null,
+      allowReplies: json['allowReplies'] != false,
+    );
+  }
+}
+
+class HighlightItem {
+  const HighlightItem({
+    required this.id,
+    required this.name,
+    this.itemCount = 0,
+    this.hasCover = false,
+    this.ownerId,
+  });
+
+  final String id;
+  final String name;
+  final int itemCount;
+  final bool hasCover;
+  final String? ownerId;
+
+  factory HighlightItem.fromJson(Map<String, dynamic> json) {
+    return HighlightItem(
+      id: '${json['id'] ?? json['_id']}',
+      name: json['name'] as String? ?? 'Highlight',
+      itemCount: (json['itemCount'] as num?)?.toInt() ??
+          (json['items'] is List ? (json['items'] as List).length : 0),
+      hasCover: json['hasCover'] == true ||
+          (json['coverStoragePath'] != null && '${json['coverStoragePath']}'.isNotEmpty),
+      ownerId: json['owner'] != null
+          ? (json['owner'] is Map ? '${json['owner']['id'] ?? json['owner']['_id']}' : '${json['owner']}')
+          : null,
     );
   }
 }

@@ -11,6 +11,7 @@ import '../widgets/theme_scene.dart';
 import 'new_chat_screen.dart';
 import 'join_group_screen.dart';
 import 'discover_groups_screen.dart';
+import 'activity_screen.dart';
 import 'settings_screen.dart';
 import 'thread_screen.dart';
 import 'user_profile_screen.dart';
@@ -81,6 +82,11 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            tooltip: 'Activity',
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ActivityScreen())),
+            icon: const Icon(Icons.timeline_outlined),
+          ),
           IconButton(
             tooltip: 'New chat',
             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const NewChatScreen())),
