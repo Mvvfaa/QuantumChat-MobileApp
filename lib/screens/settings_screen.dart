@@ -569,11 +569,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 24),
           _Section(title: 'Server', colors: colors),
           Text(
-            'Point this app at the QuantumChat backend. Android emulator: http://10.0.2.2:5000',
+            'Point this app at the QuantumChat backend. Local backend on Android emulator: http://10.0.2.2:5000',
             style: TextStyle(color: colors.textMuted, fontSize: 12),
           ),
           const SizedBox(height: 8),
-          TextField(controller: apiBase, decoration: const InputDecoration(hintText: 'http://10.0.2.2:5000')),
+          TextField(controller: apiBase, decoration: const InputDecoration(hintText: 'https://quantum-chat-backend-six.vercel.app')),
           const SizedBox(height: 10),
           OutlinedButton(
             onPressed: () async {
