@@ -70,12 +70,13 @@ class _ThreadScreenState extends State<ThreadScreen> {
   Timer? _recordTimer;
   String? _recordPath;
   static const int _maxRecordSeconds = 60;
+  /// Prevents double-send when Enter triggers key + IME + formatter together.
+  bool _sendInFlight = false;
+  bool _enterSendQueued = false;
 
   @override
   void initState() {
     super.initState();
-    // Enter sends (like the website); Shift+Enter keeps a newline.
-    _composerFocus.onKeyEvent = _onComposerKeyEvent;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(context.read<ChatController>().refreshOpenThread());
@@ -86,16 +87,6 @@ class _ThreadScreenState extends State<ThreadScreen> {
       if (!mounted) return;
       unawaited(context.read<ChatController>().refreshOpenThread());
     });
-  }
-
-  KeyEventResult _onComposerKeyEvent(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
-    final isEnter = event.logicalKey == LogicalKeyboardKey.enter ||
-        event.logicalKey == LogicalKeyboardKey.numpadEnter;
-    if (!isEnter) return KeyEventResult.ignored;
-    if (HardwareKeyboard.instance.isShiftPressed) return KeyEventResult.ignored;
-    unawaited(_send());
-    return KeyEventResult.handled;
   }
 
   Future<void> _loadChatTheme() async {
@@ -246,19 +237,27 @@ class _ThreadScreenState extends State<ThreadScreen> {
   }
 
   Future<void> _send() async {
+    if (_sendInFlight) return;
     final chat = context.read<ChatController>();
     if (chat.sending) return;
     final text = composer.text.trim();
     if (text.isEmpty) return;
+    _sendInFlight = true;
     composer.clear();
-    await chat.sendText(text);
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    if (scroll.hasClients) {
-      scroll.animateTo(
-        scroll.position.maxScrollExtent + 80,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOut,
-      );
+    if (mounted) setState(() {});
+    try {
+      await chat.sendText(text);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      if (scroll.hasClients) {
+        scroll.animateTo(
+          scroll.position.maxScrollExtent + 80,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+        );
+      }
+    } finally {
+      _sendInFlight = false;
+      if (mounted) setState(() {});
     }
   }
 
@@ -1380,9 +1379,13 @@ class _ThreadScreenState extends State<ThreadScreen> {
                                     final oldNl = '\n'.allMatches(oldValue.text).length;
                                     final newNl = '\n'.allMatches(newValue.text).length;
                                     if (newNl <= oldNl) return newValue;
-                                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                                      if (mounted) unawaited(_send());
-                                    });
+                                    if (!_sendInFlight && !_enterSendQueued) {
+                                      _enterSendQueued = true;
+                                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                                        _enterSendQueued = false;
+                                        if (mounted) unawaited(_send());
+                                      });
+                                    }
                                     return oldValue;
                                   }),
                                 ],
@@ -1390,7 +1393,10 @@ class _ThreadScreenState extends State<ThreadScreen> {
                                   _onComposerChangedWithMentions(v, chat);
                                   setState(() {});
                                 },
-                                onSubmitted: (_) => _send(),
+                                onSubmitted: (_) {
+                                  if (_sendInFlight || _enterSendQueued) return;
+                                  unawaited(_send());
+                                },
                                 onTap: () {
                                   _removeMentionOverlay();
                                   if (_showEmojiPicker) setState(() => _showEmojiPicker = false);
