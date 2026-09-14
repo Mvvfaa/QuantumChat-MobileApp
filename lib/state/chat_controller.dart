@@ -805,14 +805,20 @@ class ChatController extends ChangeNotifier {
     final conv = selected;
     final text = draft.trim();
     if (conv == null || text.isEmpty || sending) return;
+    // Lock immediately so a second Enter/tap cannot start another send.
+    sending = true;
+    notifyListeners();
 
     if (editing != null) {
-      await editMessageText(editing!, text);
+      try {
+        await editMessageText(editing!, text);
+      } finally {
+        sending = false;
+        notifyListeners();
+      }
       return;
     }
 
-    sending = true;
-    notifyListeners();
     final replyId = replyTo?.id;
     try {
       if (conv.type == ConversationType.group) {
