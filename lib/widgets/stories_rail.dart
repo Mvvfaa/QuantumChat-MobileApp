@@ -358,113 +358,187 @@ class StoriesRail extends StatelessWidget {
                 ),
               );
             }
-            return Dialog(
-              backgroundColor: Colors.black,
-              insetPadding: const EdgeInsets.all(12),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ListTile(
-                    leading: UserAvatar(name: story.username, userId: story.userId, hasAvatar: story.hasAvatar, size: 36),
-                    title: Text(story.username, style: const TextStyle(color: Colors.white)),
-                    subtitle: story.sealed
-                        ? const Text('Sealed', style: TextStyle(color: Colors.white54, fontSize: 12))
-                        : null,
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (isOwn)
-                          IconButton(
-                            tooltip: 'Viewers',
-                            onPressed: () => _showViewers(ctx, story.id),
-                            icon: const Icon(Icons.visibility_outlined, color: Colors.white),
+
+            var reacting = false;
+            String? burstEmoji;
+            String? statusLine;
+
+            return StatefulBuilder(
+              builder: (context, setLocal) {
+                Future<void> sendReaction(String emoji) async {
+                  if (reacting) return;
+                  setLocal(() {
+                    reacting = true;
+                    burstEmoji = emoji;
+                    statusLine = 'Sending…';
+                  });
+                  try {
+                    await chat.sendStoryReaction(story, emoji);
+                    if (!ctx.mounted) return;
+                    setLocal(() {
+                      reacting = false;
+                      statusLine = 'Sent to ${story.username}';
+                    });
+                    await Future<void>.delayed(const Duration(milliseconds: 900));
+                    if (!ctx.mounted) return;
+                    setLocal(() {
+                      burstEmoji = null;
+                      statusLine = null;
+                    });
+                  } catch (e) {
+                    if (!ctx.mounted) return;
+                    setLocal(() {
+                      reacting = false;
+                      burstEmoji = null;
+                      statusLine = null;
+                    });
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      SnackBar(content: Text(e is ApiException ? e.message : '$e')),
+                    );
+                  }
+                }
+
+                return Dialog(
+                  backgroundColor: Colors.black,
+                  insetPadding: const EdgeInsets.all(12),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ListTile(
+                        leading: UserAvatar(name: story.username, userId: story.userId, hasAvatar: story.hasAvatar, size: 36),
+                        title: Text(story.username, style: const TextStyle(color: Colors.white)),
+                        subtitle: story.sealed
+                            ? const Text('Sealed', style: TextStyle(color: Colors.white54, fontSize: 12))
+                            : null,
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (isOwn)
+                              IconButton(
+                                tooltip: 'Viewers',
+                                onPressed: () => _showViewers(ctx, story.id),
+                                icon: const Icon(Icons.visibility_outlined, color: Colors.white),
+                              ),
+                            if (isOwn)
+                              IconButton(
+                                tooltip: 'Save to highlight',
+                                onPressed: () async {
+                                  final bytes = snap.data?.bytes ?? mediaBytes;
+                                  if (bytes == null) return;
+                                  await _saveToHighlight(ctx, story, bytes);
+                                },
+                                icon: const Icon(Icons.bookmark_add_outlined, color: Colors.white),
+                              ),
+                            if (isOwn)
+                              IconButton(
+                                tooltip: 'Delete story',
+                                onPressed: () async {
+                                  final confirm = await showDialog<bool>(
+                                    context: ctx,
+                                    builder: (dCtx) => AlertDialog(
+                                      title: const Text('Delete this story?'),
+                                      content: const Text('This story will be removed for everyone.'),
+                                      actions: [
+                                        TextButton(onPressed: () => Navigator.pop(dCtx, false), child: const Text('Cancel')),
+                                        TextButton(onPressed: () => Navigator.pop(dCtx, true), child: const Text('Delete')),
+                                      ],
+                                    ),
+                                  );
+                                  if (confirm == true && ctx.mounted) {
+                                    try {
+                                      await api.deleteStory(story.id);
+                                      await chat.refreshStories();
+                                      if (ctx.mounted) Navigator.pop(ctx);
+                                    } catch (e) {
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+                                      }
+                                    }
+                                  }
+                                },
+                                icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                              ),
+                            IconButton(
+                              onPressed: () => Navigator.pop(ctx),
+                              icon: const Icon(Icons.close, color: Colors.white),
+                            ),
+                          ],
+                        ),
+                      ),
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxHeight: MediaQuery.of(context).size.height * 0.7,
+                          maxWidth: MediaQuery.of(context).size.width,
+                        ),
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            Center(child: body),
+                            if (burstEmoji != null)
+                              IgnorePointer(
+                                child: TweenAnimationBuilder<double>(
+                                  key: ValueKey(burstEmoji),
+                                  tween: Tween(begin: 0.4, end: 1.0),
+                                  duration: const Duration(milliseconds: 420),
+                                  curve: Curves.easeOutBack,
+                                  builder: (context, scale, child) {
+                                    return Opacity(
+                                      opacity: reacting ? 0.95 : 0.85,
+                                      child: Transform.scale(scale: scale * 1.6, child: child),
+                                    );
+                                  },
+                                  child: Text(burstEmoji!, style: const TextStyle(fontSize: 72)),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      if (!isOwn) ...[
+                        if (statusLine != null)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                if (reacting)
+                                  const SizedBox(
+                                    width: 12,
+                                    height: 12,
+                                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white70),
+                                  ),
+                                if (reacting) const SizedBox(width: 8),
+                                Text(
+                                  statusLine!,
+                                  style: const TextStyle(color: Colors.white70, fontSize: 13),
+                                ),
+                              ],
+                            ),
                           ),
-                        if (isOwn)
-                          IconButton(
-                            tooltip: 'Save to highlight',
-                            onPressed: () async {
-                              final bytes = snap.data?.bytes ?? mediaBytes;
-                              if (bytes == null) return;
-                              await _saveToHighlight(ctx, story, bytes);
-                            },
-                            icon: const Icon(Icons.bookmark_add_outlined, color: Colors.white),
-                          ),
-                        if (isOwn)
-                          IconButton(
-                            tooltip: 'Delete story',
-                            onPressed: () async {
-                              final confirm = await showDialog<bool>(
-                                context: ctx,
-                                builder: (dCtx) => AlertDialog(
-                                  title: const Text('Delete this story?'),
-                                  content: const Text('This story will be removed for everyone.'),
-                                  actions: [
-                                    TextButton(onPressed: () => Navigator.pop(dCtx, false), child: const Text('Cancel')),
-                                    TextButton(onPressed: () => Navigator.pop(dCtx, true), child: const Text('Delete')),
-                                  ],
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: ['👍', '❤️', '😂', '😮', '😢', '🔥'].map((emoji) {
+                              return Opacity(
+                                opacity: reacting ? 0.45 : 1,
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(20),
+                                  onTap: reacting ? null : () => sendReaction(emoji),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(8),
+                                    child: Text(emoji, style: const TextStyle(fontSize: 28)),
+                                  ),
                                 ),
                               );
-                              if (confirm == true && ctx.mounted) {
-                                try {
-                                  await api.deleteStory(story.id);
-                                  await chat.refreshStories();
-                                  if (ctx.mounted) Navigator.pop(ctx);
-                                } catch (e) {
-                                  if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
-                                  }
-                                }
-                              }
-                            },
-                            icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                            }).toList(),
                           ),
-                        IconButton(
-                          onPressed: () => Navigator.pop(ctx),
-                          icon: const Icon(Icons.close, color: Colors.white),
                         ),
                       ],
-                    ),
+                      if (isOwn) const SizedBox(height: 12),
+                    ],
                   ),
-                  ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxHeight: MediaQuery.of(context).size.height * 0.7,
-                      maxWidth: MediaQuery.of(context).size.width,
-                    ),
-                    child: Center(child: body),
-                  ),
-                  if (!isOwn)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: ['👍', '❤️', '😂', '😮', '😢', '🔥'].map((emoji) {
-                          return InkWell(
-                            borderRadius: BorderRadius.circular(20),
-                            onTap: () async {
-                              try {
-                                await api.reactToStory(story.id, emoji);
-                                if (ctx.mounted) {
-                                  ScaffoldMessenger.of(ctx).showSnackBar(
-                                    const SnackBar(content: Text('Reaction sent')),
-                                  );
-                                }
-                              } catch (e) {
-                                if (ctx.mounted) {
-                                  ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text('$e')));
-                                }
-                              }
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.all(8),
-                              child: Text(emoji, style: const TextStyle(fontSize: 28)),
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    ),
-                  if (isOwn) const SizedBox(height: 12),
-                ],
-              ),
+                );
+              },
             );
           },
         );

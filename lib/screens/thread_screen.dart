@@ -15,6 +15,8 @@ import '../state/auth_controller.dart';
 import '../state/chat_controller.dart';
 import '../state/theme_controller.dart';
 import '../theme/qc_theme.dart';
+import '../utils/linkify.dart';
+import '../utils/message_preview.dart';
 import '../utils/screenshot_protection.dart';
 import '../widgets/attachment_bubble.dart';
 import '../widgets/clear_chat_sheet.dart';
@@ -31,7 +33,6 @@ import '../widgets/message_actions_sheet.dart';
 import '../widgets/message_info_sheet.dart';
 import '../widgets/theme_scene.dart';
 import '../crypto/key_storage.dart';
-import '../utils/linkify.dart';
 import 'chat_media_screen.dart';
 import 'chat_theme_screen.dart';
 import 'group_info_screen.dart';
@@ -1496,7 +1497,8 @@ class _ThreadScreenState extends State<ThreadScreen> {
         );
       }
     } else if (action == 'copy' && message.text != null) {
-      await Clipboard.setData(ClipboardData(text: message.text!));
+      final copyText = getMessagePreviewText(message.text, isMine: mine);
+      await Clipboard.setData(ClipboardData(text: copyText.isNotEmpty ? copyText : message.text!));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied')));
       }
@@ -1661,10 +1663,56 @@ class _MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final storyPayload = parseStructuredMessageText(message.text);
+    final isStoryReaction = isStoryReactionPayload(storyPayload);
+    final isStoryReply = isStoryReplyPayload(storyPayload);
     final base = glassBubbleDecoration(mine: mine, colors: colors, scenic: scenic);
     final tinted = (mine && bubbleTintMine != null)
         ? base.copyWith(color: scenic ? bubbleTintMine!.withValues(alpha: 0.88) : bubbleTintMine)
         : base;
+
+    if (isStoryReaction) {
+      final emoji = '${storyPayload?['emoji'] ?? ''}'.trim();
+      final label = mine ? 'You reacted to their story' : 'Reacted to your story';
+      return Align(
+        alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onOpenActions,
+            onLongPress: onOpenActions,
+            borderRadius: BorderRadius.circular(22),
+            child: Container(
+              margin: const EdgeInsets.symmetric(vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: (mine ? colors.bubbleMine : colors.bubbleTheirs).withValues(alpha: scenic ? 0.85 : 1),
+                borderRadius: BorderRadius.circular(22),
+                border: highlight ? Border.all(color: colors.accentCyan, width: 1.5) : null,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (emoji.isNotEmpty) Text(emoji, style: const TextStyle(fontSize: 28)),
+                  if (emoji.isNotEmpty) const SizedBox(width: 10),
+                  Flexible(
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        color: mine ? colors.bubbleMineFg : colors.bubbleTheirsFg,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
       child: Material(
@@ -1733,7 +1781,7 @@ class _MessageBubble extends StatelessWidget {
                                     border: Border(left: BorderSide(color: colors.accentCyan, width: 3)),
                                   ),
                                   child: Text(
-                                    message.replyToText!,
+                                    getMessagePreviewText(message.replyToText),
                                     style: TextStyle(color: colors.textMuted, fontSize: 12),
                                   ),
                                 ),
@@ -1761,19 +1809,47 @@ class _MessageBubble extends StatelessWidget {
                             else if (message.text != null && message.attachment == null)
                               Align(
                                 alignment: Alignment.centerLeft,
-                                child: LinkifiedText(
-                                  text: message.text!,
-                                  colors: colors,
-                                  baseStyle: TextStyle(
-                                    color: mine ? colors.bubbleMineFg : colors.bubbleTheirsFg,
-                                    height: 1.35,
-                                  ),
-                                  mentionStyle: TextStyle(
-                                    color: colors.accentCyan,
-                                    fontWeight: FontWeight.w600,
-                                    height: 1.35,
-                                  ),
-                                ),
+                                child: isStoryReply
+                                    ? Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            mine ? 'Replied to their story' : 'Replied to your story',
+                                            style: TextStyle(
+                                              color: colors.textMuted,
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          LinkifiedText(
+                                            text: getMessagePreviewText(message.text, isMine: mine),
+                                            colors: colors,
+                                            baseStyle: TextStyle(
+                                              color: mine ? colors.bubbleMineFg : colors.bubbleTheirsFg,
+                                              height: 1.35,
+                                            ),
+                                            mentionStyle: TextStyle(
+                                              color: colors.accentCyan,
+                                              fontWeight: FontWeight.w600,
+                                              height: 1.35,
+                                            ),
+                                          ),
+                                        ],
+                                      )
+                                    : LinkifiedText(
+                                        text: message.text!,
+                                        colors: colors,
+                                        baseStyle: TextStyle(
+                                          color: mine ? colors.bubbleMineFg : colors.bubbleTheirsFg,
+                                          height: 1.35,
+                                        ),
+                                        mentionStyle: TextStyle(
+                                          color: colors.accentCyan,
+                                          fontWeight: FontWeight.w600,
+                                          height: 1.35,
+                                        ),
+                                      ),
                               )
                             else if (message.text == null && message.attachment == null)
                               Align(

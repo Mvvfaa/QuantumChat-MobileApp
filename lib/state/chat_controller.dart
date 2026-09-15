@@ -801,6 +801,78 @@ class ChatController extends ChangeNotifier {
     );
   }
 
+  /// Send a WhatsApp-style story reaction as a sealed DM (website parity).
+  Future<void> sendStoryReaction(StoryItem story, String emoji) async {
+    final ownerId = story.userId;
+    final reaction = emoji.trim();
+    if (ownerId.isEmpty || reaction.isEmpty) {
+      throw ApiException('Invalid story reaction');
+    }
+    if (ownerId == me.id) {
+      throw ApiException("You can't react to your own story");
+    }
+
+    QcUser? peer;
+    for (final u in users) {
+      if (u.id == ownerId) {
+        peer = u;
+        break;
+      }
+    }
+    if (peer == null) {
+      for (final u in friends) {
+        if (u.id == ownerId) {
+          peer = u;
+          break;
+        }
+      }
+    }
+    if (peer == null || peer.publicKeys.isEmpty) {
+      peer = await auth.api.getUser(ownerId);
+    }
+    if (peer.publicKeys.isEmpty) {
+      throw ApiException("Can't react — missing this user's encryption keys");
+    }
+
+    final mySet = await storage.getCurrentKeySet(me.id);
+    if (mySet.isEmpty) {
+      throw ApiException('Import your encryption keys before reacting');
+    }
+
+    final payload = jsonEncode({
+      'type': 'story_reaction',
+      'storyId': story.id,
+      'mediaType': story.mediaType,
+      'emoji': reaction,
+    });
+
+    final forRecipient = sealMessage(payload, pickRandom(peer.publicKeys));
+    final forSender = sealMessage(payload, pickRandom(mySet.map((k) => k.publicKey).toList()));
+    final raw = await auth.api.sendMessage({
+      'to': ownerId,
+      'forRecipient': forRecipient.toJson(),
+      'forSender': forSender.toJson(),
+      'replyToStory': story.id,
+    });
+
+    final msg = await decorate(raw);
+    msg.text = payload;
+
+    final convKey = storage.conversationKeyForUser(ownerId);
+    await storage.setConversationActivity(
+      me.id,
+      convKey,
+      at: DateTime.now().toUtc().toIso8601String(),
+      from: me.id,
+    );
+
+    if (selected?.type == ConversationType.dm && selected?.id == ownerId) {
+      messages = [...messages, msg];
+    }
+    _rebuildConversations();
+    notifyListeners();
+  }
+
   Future<void> sendText(String draft) async {
     final conv = selected;
     final text = draft.trim();
