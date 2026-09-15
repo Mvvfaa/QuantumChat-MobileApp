@@ -149,7 +149,8 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
       ),
       body: ThemeScene(
         themeId: theme.id,
-        intensity: 0.72,
+        intensity: 0.55,
+        animate: false,
         child: Column(
           children: [
           if (auth.user?.emailVerified == false)
@@ -274,7 +275,13 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
           const SizedBox(height: 4),
           Expanded(
             child: chat.loadingInbox && chat.conversations.isEmpty
-                ? const Center(child: CircularProgressIndicator())
+                ? const Center(
+                    child: SizedBox(
+                      width: 36,
+                      height: 36,
+                      child: CircularProgressIndicator(strokeWidth: 3),
+                    ),
+                  )
                 : RefreshIndicator(
                     onRefresh: chat.refreshInbox,
                     child: chat.conversations.isEmpty

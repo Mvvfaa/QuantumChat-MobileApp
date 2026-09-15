@@ -12,11 +12,14 @@ class ThemeScene extends StatelessWidget {
     required this.themeId,
     required this.child,
     this.intensity = 1,
+    this.animate = true,
   });
 
   final QcThemeId themeId;
   final Widget child;
   final double intensity;
+  /// Home inbox should keep this false — continuous animation skips frames on emulators.
+  final bool animate;
 
   @override
   Widget build(BuildContext context) {
@@ -28,7 +31,18 @@ class ThemeScene extends StatelessWidget {
         Positioned.fill(
           child: IgnorePointer(
             child: RepaintBoundary(
-              child: _AnimatedScene(themeId: themeId, intensity: intensity),
+              child: animate
+                  ? _AnimatedScene(themeId: themeId, intensity: intensity)
+                  : CustomPaint(
+                      painter: _ThemeScenePainter(
+                        themeId: themeId,
+                        t: 0.15,
+                        stars: const [],
+                        particles: const [],
+                        intensity: intensity * 0.85,
+                      ),
+                      child: const SizedBox.expand(),
+                    ),
             ),
           ),
         ),
