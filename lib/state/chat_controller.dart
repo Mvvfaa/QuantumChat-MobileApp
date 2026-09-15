@@ -10,7 +10,6 @@ import '../crypto/qc_crypto.dart';
 import '../models/models.dart';
 import '../utils/display_name.dart';
 import '../utils/group_payload.dart';
-import '../widgets/avatar_cache.dart';
 import 'auth_controller.dart';
 
 class ChatController extends ChangeNotifier {
@@ -68,16 +67,17 @@ class ChatController extends ChangeNotifier {
     auth.onSocketConnected = _onSocketReady;
     _ensureSocketHandlers();
     _started = true;
-    await refreshInbox();
+    // Don't block UI startup on a full inbox round-trip.
+    unawaited(refreshInbox());
     _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(const Duration(seconds: 12), (_) {
+    _pollTimer = Timer.periodic(const Duration(seconds: 20), (_) {
       if (auth.user == null) return;
       if (!socket.connected) {
         unawaited(_pollSync());
       }
     });
     _threadPollTimer?.cancel();
-    _threadPollTimer = Timer.periodic(const Duration(seconds: 8), (_) {
+    _threadPollTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (auth.user == null || selected == null) return;
       unawaited(refreshOpenThread());
     });
@@ -391,28 +391,52 @@ class ChatController extends ChangeNotifier {
     loadingInbox = true;
     notifyListeners();
     try {
-      users = await auth.api.listAllUsers();
-      groups = await auth.api.listGroups();
+      // Website-style light inbox: friends + one users page — never paginate the whole directory.
+      List<QcUser> loadedFriends = const [];
       try {
-        friends = await auth.api.listFriends();
-      } catch (_) {
-        friends = [];
-      }
-      _mergeFriendProfiles();
-      for (final u in users) {
-        if (u.hasAvatar) AvatarCache.instance.bust(u.id);
-      }
+        loadedFriends = await auth.api.listFriends();
+      } catch (_) {}
+      final pageUsers = await auth.api.listUsers();
+      groups = await auth.api.listGroups();
       await _refreshFriendRequests();
-      await refreshStories();
-      await _ensureQuantumAiContact();
+      friends = loadedFriends;
+
+      final byId = <String, QcUser>{};
+      for (final u in pageUsers) {
+        byId[u.id] = u;
+      }
+      for (final f in friends) {
+        byId[f.id] = f;
+      }
+      users = byId.values.toList();
+      _mergeFriendProfiles();
       _rebuildConversations();
     } on ApiException catch (e) {
       threadError = e.message;
+      notifyListeners();
+    } catch (e) {
+      threadError = '$e';
       notifyListeners();
     } finally {
       loadingInbox = false;
       _inboxRefreshInFlight = false;
       notifyListeners();
+    }
+    // Stories + QuantumAI after the list is visible — don't block the home screen.
+    unawaited(_enrichInboxBackground());
+  }
+
+  Future<void> _enrichInboxBackground() async {
+    try {
+      await refreshStories();
+    } catch (e) {
+      debugPrint('refreshStories background failed: $e');
+    }
+    try {
+      await _ensureQuantumAiContact();
+      _rebuildConversations();
+    } catch (e) {
+      debugPrint('QuantumAI enrich failed: $e');
     }
   }
 
@@ -551,6 +575,13 @@ class ChatController extends ChangeNotifier {
       if (u.id == me.id) continue;
       final key = storage.conversationKeyForUser(u.id);
       final activity = storage.getConversationActivity(me.id, key);
+      final isFriend = friends.any((f) => f.id == u.id);
+      final isAi = u.isQuantumAi;
+      final hasActivity = activity != null && activity.at.isNotEmpty;
+      // Don't turn the whole user directory into a chat list — that freezes the home screen.
+      if (!isFriend && !isAi && !hasActivity && search.trim().isEmpty) {
+        continue;
+      }
       items.add(Conversation(
         key: key,
         type: ConversationType.dm,

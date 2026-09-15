@@ -82,9 +82,9 @@ class _UserAvatarState extends State<UserAvatar> {
       return;
     }
 
-    // Group photos: only fetch when the server says one exists.
-    // User avatars: always try — hasAvatar from list endpoints can be stale.
-    if (widget.isGroup && !widget.hasAvatar) {
+    // Group photos and user avatars: only fetch when the server says one exists.
+    // Avoids N parallel 404s that freeze the home list on large directories.
+    if (!widget.hasAvatar) {
       if (mounted) {
         setState(() {
           _loadedBytes = null;
