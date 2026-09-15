@@ -85,7 +85,9 @@ class ApiClient {
   }
 
   Future<Uint8List?> getBytes(String path) async {
-    final res = await http.get(_uri(path), headers: _headers(json: false));
+    final res = await http
+        .get(_uri(path), headers: _headers(json: false))
+        .timeout(const Duration(seconds: 45));
     if (res.statusCode >= 400) return null;
     return res.bodyBytes;
   }
@@ -535,9 +537,8 @@ class ApiClient {
 
   Future<void> deleteStory(String id) async => delete('/stories/$id');
 
-  Future<void> reactToStory(String id, String emoji) async {
-    await post('/stories/$id/react', {'emoji': emoji});
-  }
+  /// Story reactions are sealed DMs (`type: story_reaction`), not a /stories/:id/react route.
+  /// Prefer [ChatController.sendStoryReaction].
 
   Future<List<StoryItem>> listStoryDrafts() async {
     final body = await get('/stories/mine/drafts');

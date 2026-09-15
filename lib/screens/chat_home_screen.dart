@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -306,15 +308,15 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
                                         decoration: BoxDecoration(color: colors.accent, shape: BoxShape.circle),
                                       )
                                     : null,
-                                onTap: () async {
-                                  await chat.open(c);
-                                  if (context.mounted) {
-                                    await Navigator.push(
-                                      context,
-                                      MaterialPageRoute(builder: (_) => const ThreadScreen()),
-                                    );
-                                    chat.closeThread();
-                                  }
+                                onTap: () {
+                                  // Open in background — awaiting decrypt here freezes the whole home UI.
+                                  unawaited(chat.open(c));
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(builder: (_) => const ThreadScreen()),
+                                  ).then((_) {
+                                    if (context.mounted) chat.closeThread();
+                                  });
                                 },
                               ),
                               );

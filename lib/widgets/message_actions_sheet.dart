@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../models/models.dart';
 import '../theme/qc_theme.dart';
+import '../utils/message_preview.dart';
 
 /// WhatsApp-style message actions: quick reactions + reply / edit / delete / copy / forward / pin / star.
 Future<String?> showMessageActionsSheet({
@@ -18,7 +19,10 @@ Future<String?> showMessageActionsSheet({
     backgroundColor: colors.surface,
     showDragHandle: true,
     builder: (ctx) {
-      final preview = message.text ?? (message.attachment != null ? '📎 Attachment' : 'Message');
+      final preview = getMessagePreviewText(message.text, isMine: mine);
+      final previewLine = preview.isNotEmpty
+          ? preview
+          : (message.attachment != null ? '📎 Attachment' : 'Message');
       return SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -27,7 +31,7 @@ Future<String?> showMessageActionsSheet({
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                preview,
+                previewLine,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(color: colors.textMuted, fontSize: 13),

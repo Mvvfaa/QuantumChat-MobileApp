@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -266,209 +267,16 @@ class StoriesRail extends StatelessWidget {
   }
 
   Future<void> _openStory(BuildContext context, StoryItem story) async {
-    final api = context.read<AuthController>().api;
-    final me = context.read<AuthController>().user;
-    final chat = context.read<ChatController>();
-    final isOwn = me != null && story.userId == me.id;
-    Uint8List? mediaBytes;
-
     await showDialog<void>(
       context: context,
+      barrierDismissible: true,
       barrierColor: Colors.black87,
-      builder: (ctx) {
-        return FutureBuilder<({Uint8List? bytes, String? error, String? textFallback})>(
-          future: () async {
-            try {
-              await api.markStoryViewed(story.id);
-              if (!story.sealed &&
-                  story.mediaType == 'text' &&
-                  story.textContent.trim().isNotEmpty) {
-                return (bytes: null, error: null, textFallback: story.textContent.trim());
-              }
-              if (me == null) {
-                return (bytes: null, error: 'Not signed in', textFallback: null);
-              }
-              final bytes = await resolveStoryMediaBytes(
-                story: story,
-                currentUserId: me.id,
-                storage: KeyStorage.instance,
-                fetchRaw: api.getStoryMedia,
-              );
-              mediaBytes = bytes;
-              if (bytes == null) {
-                return (bytes: null, error: 'Could not load story', textFallback: null);
-              }
-              if (story.mediaType != 'video' &&
-                  story.mediaType != 'audio' &&
-                  !looksLikeImageBytes(bytes)) {
-                return (
-                  bytes: null,
-                  error: story.sealed
-                      ? 'Could not decrypt this sealed story'
-                      : 'Story media is not a valid image',
-                  textFallback: null,
-                );
-              }
-              return (bytes: bytes, error: null, textFallback: null);
-            } catch (e) {
-              return (bytes: null, error: '$e', textFallback: null);
-            }
-          }(),
-          builder: (context, snap) {
-            Widget body;
-            if (snap.connectionState != ConnectionState.done) {
-              body = const CircularProgressIndicator();
-            } else if (snap.hasError || snap.data?.error != null) {
-              body = Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text(
-                  snap.data?.error ?? '${snap.error}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white70, fontSize: 14),
-                ),
-              );
-            } else if (snap.data?.textFallback != null) {
-              body = Container(
-                width: double.infinity,
-                constraints: const BoxConstraints(minHeight: 280),
-                color: const Color(0xFF111827),
-                alignment: Alignment.center,
-                padding: const EdgeInsets.all(24),
-                child: Text(
-                  snap.data!.textFallback!,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700),
-                ),
-              );
-            } else if (snap.data?.bytes == null) {
-              body = const Text('Could not load story', style: TextStyle(color: Colors.white70));
-            } else {
-              body = InteractiveViewer(
-                child: Image.memory(
-                  snap.data!.bytes!,
-                  fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Text(
-                      'Could not display this story',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white70),
-                    ),
-                  ),
-                ),
-              );
-            }
-            return Dialog(
-              backgroundColor: Colors.black,
-              insetPadding: const EdgeInsets.all(12),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ListTile(
-                    leading: UserAvatar(name: story.username, userId: story.userId, hasAvatar: story.hasAvatar, size: 36),
-                    title: Text(story.username, style: const TextStyle(color: Colors.white)),
-                    subtitle: story.sealed
-                        ? const Text('Sealed', style: TextStyle(color: Colors.white54, fontSize: 12))
-                        : null,
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (isOwn)
-                          IconButton(
-                            tooltip: 'Viewers',
-                            onPressed: () => _showViewers(ctx, story.id),
-                            icon: const Icon(Icons.visibility_outlined, color: Colors.white),
-                          ),
-                        if (isOwn)
-                          IconButton(
-                            tooltip: 'Save to highlight',
-                            onPressed: () async {
-                              final bytes = snap.data?.bytes ?? mediaBytes;
-                              if (bytes == null) return;
-                              await _saveToHighlight(ctx, story, bytes);
-                            },
-                            icon: const Icon(Icons.bookmark_add_outlined, color: Colors.white),
-                          ),
-                        if (isOwn)
-                          IconButton(
-                            tooltip: 'Delete story',
-                            onPressed: () async {
-                              final confirm = await showDialog<bool>(
-                                context: ctx,
-                                builder: (dCtx) => AlertDialog(
-                                  title: const Text('Delete this story?'),
-                                  content: const Text('This story will be removed for everyone.'),
-                                  actions: [
-                                    TextButton(onPressed: () => Navigator.pop(dCtx, false), child: const Text('Cancel')),
-                                    TextButton(onPressed: () => Navigator.pop(dCtx, true), child: const Text('Delete')),
-                                  ],
-                                ),
-                              );
-                              if (confirm == true && ctx.mounted) {
-                                try {
-                                  await api.deleteStory(story.id);
-                                  await chat.refreshStories();
-                                  if (ctx.mounted) Navigator.pop(ctx);
-                                } catch (e) {
-                                  if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
-                                  }
-                                }
-                              }
-                            },
-                            icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                          ),
-                        IconButton(
-                          onPressed: () => Navigator.pop(ctx),
-                          icon: const Icon(Icons.close, color: Colors.white),
-                        ),
-                      ],
-                    ),
-                  ),
-                  ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxHeight: MediaQuery.of(context).size.height * 0.7,
-                      maxWidth: MediaQuery.of(context).size.width,
-                    ),
-                    child: Center(child: body),
-                  ),
-                  if (!isOwn)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: ['👍', '❤️', '😂', '😮', '😢', '🔥'].map((emoji) {
-                          return InkWell(
-                            borderRadius: BorderRadius.circular(20),
-                            onTap: () async {
-                              try {
-                                await api.reactToStory(story.id, emoji);
-                                if (ctx.mounted) {
-                                  ScaffoldMessenger.of(ctx).showSnackBar(
-                                    const SnackBar(content: Text('Reaction sent')),
-                                  );
-                                }
-                              } catch (e) {
-                                if (ctx.mounted) {
-                                  ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text('$e')));
-                                }
-                              }
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.all(8),
-                              child: Text(emoji, style: const TextStyle(fontSize: 28)),
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    ),
-                  if (isOwn) const SizedBox(height: 12),
-                ],
-              ),
-            );
-          },
-        );
-      },
+      useRootNavigator: true,
+      builder: (ctx) => _StoryViewerDialog(
+        story: story,
+        onShowViewers: () => _showViewers(ctx, story.id),
+        onSaveHighlight: (bytes) => _saveToHighlight(ctx, story, bytes),
+      ),
     );
   }
 
@@ -617,6 +425,319 @@ Future<Uint8List> renderTextStoryPng({
   final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
   if (byteData == null) throw Exception('Failed to render text story');
   return byteData.buffer.asUint8List();
+}
+
+class _StoryViewerDialog extends StatefulWidget {
+  const _StoryViewerDialog({
+    required this.story,
+    required this.onShowViewers,
+    required this.onSaveHighlight,
+  });
+
+  final StoryItem story;
+  final VoidCallback onShowViewers;
+  final Future<void> Function(Uint8List bytes) onSaveHighlight;
+
+  @override
+  State<_StoryViewerDialog> createState() => _StoryViewerDialogState();
+}
+
+class _StoryViewerDialogState extends State<_StoryViewerDialog> {
+  bool _loading = true;
+  String? _error;
+  String? _textFallback;
+  Uint8List? _bytes;
+  bool _reacting = false;
+  String? _burstEmoji;
+  String? _statusLine;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+  }
+
+  Future<void> _load() async {
+    final story = widget.story;
+    final api = context.read<AuthController>().api;
+    final me = context.read<AuthController>().user;
+    try {
+      unawaited(api.markStoryViewed(story.id));
+      if (!story.sealed && story.mediaType == 'text' && story.textContent.trim().isNotEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _loading = false;
+          _textFallback = story.textContent.trim();
+        });
+        return;
+      }
+      if (me == null) {
+        if (!mounted) return;
+        setState(() {
+          _loading = false;
+          _error = 'Not signed in';
+        });
+        return;
+      }
+      final bytes = await resolveStoryMediaBytes(
+        story: story,
+        currentUserId: me.id,
+        storage: KeyStorage.instance,
+        fetchRaw: api.getStoryMedia,
+      ).timeout(const Duration(seconds: 45));
+      if (!mounted) return;
+      if (bytes == null) {
+        setState(() {
+          _loading = false;
+          _error = 'Could not load story';
+        });
+        return;
+      }
+      if (story.mediaType != 'video' &&
+          story.mediaType != 'audio' &&
+          !looksLikeImageBytes(bytes)) {
+        setState(() {
+          _loading = false;
+          _error = story.sealed
+              ? 'Could not decrypt this sealed story'
+              : 'Story media is not a valid image';
+        });
+        return;
+      }
+      setState(() {
+        _loading = false;
+        _bytes = bytes;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = '$e';
+      });
+    }
+  }
+
+  Future<void> _sendReaction(String emoji) async {
+    if (_reacting) return;
+    final chat = context.read<ChatController>();
+    setState(() {
+      _reacting = true;
+      _burstEmoji = emoji;
+      _statusLine = 'Sending…';
+    });
+    try {
+      await chat.sendStoryReaction(widget.story, emoji);
+      if (!mounted) return;
+      setState(() {
+        _reacting = false;
+        _statusLine = 'Sent to ${widget.story.username}';
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+      if (!mounted) return;
+      setState(() {
+        _burstEmoji = null;
+        _statusLine = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _reacting = false;
+        _burstEmoji = null;
+        _statusLine = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e is ApiException ? e.message : '$e')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final story = widget.story;
+    final me = context.read<AuthController>().user;
+    final api = context.read<AuthController>().api;
+    final chat = context.read<ChatController>();
+    final isOwn = me != null && story.userId == me.id;
+
+    Widget body;
+    if (_loading) {
+      body = const CircularProgressIndicator();
+    } else if (_error != null) {
+      body = Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text(
+          _error!,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.white70, fontSize: 14),
+        ),
+      );
+    } else if (_textFallback != null) {
+      body = Container(
+        width: double.infinity,
+        constraints: const BoxConstraints(minHeight: 280),
+        color: const Color(0xFF111827),
+        alignment: Alignment.center,
+        padding: const EdgeInsets.all(24),
+        child: Text(
+          _textFallback!,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700),
+        ),
+      );
+    } else if (_bytes == null) {
+      body = const Text('Could not load story', style: TextStyle(color: Colors.white70));
+    } else {
+      body = InteractiveViewer(
+        child: Image.memory(
+          _bytes!,
+          fit: BoxFit.contain,
+          gaplessPlayback: true,
+          errorBuilder: (_, __, ___) => const Padding(
+            padding: EdgeInsets.all(24),
+            child: Text(
+              'Could not display this story',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white70),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Dialog(
+      backgroundColor: Colors.black,
+      insetPadding: const EdgeInsets.all(12),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: UserAvatar(name: story.username, userId: story.userId, hasAvatar: story.hasAvatar, size: 36),
+            title: Text(story.username, style: const TextStyle(color: Colors.white)),
+            subtitle: story.sealed
+                ? const Text('Sealed', style: TextStyle(color: Colors.white54, fontSize: 12))
+                : null,
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (isOwn)
+                  IconButton(
+                    tooltip: 'Viewers',
+                    onPressed: widget.onShowViewers,
+                    icon: const Icon(Icons.visibility_outlined, color: Colors.white),
+                  ),
+                if (isOwn)
+                  IconButton(
+                    tooltip: 'Save to highlight',
+                    onPressed: _bytes == null ? null : () => widget.onSaveHighlight(_bytes!),
+                    icon: const Icon(Icons.bookmark_add_outlined, color: Colors.white),
+                  ),
+                if (isOwn)
+                  IconButton(
+                    tooltip: 'Delete story',
+                    onPressed: () async {
+                      final confirm = await showDialog<bool>(
+                        context: context,
+                        builder: (dCtx) => AlertDialog(
+                          title: const Text('Delete this story?'),
+                          content: const Text('This story will be removed for everyone.'),
+                          actions: [
+                            TextButton(onPressed: () => Navigator.pop(dCtx, false), child: const Text('Cancel')),
+                            TextButton(onPressed: () => Navigator.pop(dCtx, true), child: const Text('Delete')),
+                          ],
+                        ),
+                      );
+                      if (confirm == true && mounted) {
+                        try {
+                          await api.deleteStory(story.id);
+                          await chat.refreshStories();
+                          if (mounted) Navigator.pop(context);
+                        } catch (e) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+                          }
+                        }
+                      }
+                    },
+                    icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                  ),
+                IconButton(
+                  onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+                  icon: const Icon(Icons.close, color: Colors.white),
+                ),
+              ],
+            ),
+          ),
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.7,
+              maxWidth: MediaQuery.of(context).size.width,
+            ),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Center(child: body),
+                if (_burstEmoji != null)
+                  IgnorePointer(
+                    child: TweenAnimationBuilder<double>(
+                      key: ValueKey(_burstEmoji),
+                      tween: Tween(begin: 0.4, end: 1.0),
+                      duration: const Duration(milliseconds: 420),
+                      curve: Curves.easeOutBack,
+                      builder: (context, scale, child) {
+                        return Opacity(
+                          opacity: _reacting ? 0.95 : 0.85,
+                          child: Transform.scale(scale: scale * 1.6, child: child),
+                        );
+                      },
+                      child: Text(_burstEmoji!, style: const TextStyle(fontSize: 72)),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (!isOwn) ...[
+            if (_statusLine != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (_reacting)
+                      const SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white70),
+                      ),
+                    if (_reacting) const SizedBox(width: 8),
+                    Text(_statusLine!, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                  ],
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: ['👍', '❤️', '😂', '😮', '😢', '🔥'].map((emoji) {
+                  return Opacity(
+                    opacity: _reacting ? 0.45 : 1,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(20),
+                      onTap: _reacting ? null : () => _sendReaction(emoji),
+                      child: Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Text(emoji, style: const TextStyle(fontSize: 28)),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ],
+          if (isOwn) const SizedBox(height: 12),
+        ],
+      ),
+    );
+  }
 }
 
 class _AddStoryChip extends StatelessWidget {

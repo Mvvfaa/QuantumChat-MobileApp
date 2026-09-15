@@ -50,6 +50,10 @@ class ChatController extends ChangeNotifier {
   bool _started = false;
   bool _handlersRegistered = false;
   String? _lastThreadSyncAt;
+  int _openGeneration = 0;
+  bool _threadRefreshInFlight = false;
+  bool _pollSyncInFlight = false;
+  bool _inboxRefreshInFlight = false;
 
   QcUser get me => auth.user!;
 
@@ -69,7 +73,7 @@ class ChatController extends ChangeNotifier {
       }
     });
     _threadPollTimer?.cancel();
-    _threadPollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+    _threadPollTimer = Timer.periodic(const Duration(seconds: 8), (_) {
       if (auth.user == null || selected == null) return;
       unawaited(refreshOpenThread());
     });
@@ -377,6 +381,8 @@ class ChatController extends ChangeNotifier {
 
   Future<void> refreshInbox() async {
     if (!auth.hasLocalKeyring) return;
+    if (_inboxRefreshInFlight) return;
+    _inboxRefreshInFlight = true;
     loadingInbox = true;
     notifyListeners();
     try {
@@ -399,6 +405,7 @@ class ChatController extends ChangeNotifier {
       notifyListeners();
     } finally {
       loadingInbox = false;
+      _inboxRefreshInFlight = false;
       notifyListeners();
     }
   }
@@ -424,12 +431,18 @@ class ChatController extends ChangeNotifier {
   Future<void> searchPeople(String q) async {
     search = q;
     if (q.trim().length < 2) {
-      await refreshInbox();
+      // Filter locally — do not reload every user page on each keystroke clear.
+      _rebuildConversations();
       return;
     }
-    users = await auth.api.listUsers(q: q.trim());
-    groups = await auth.api.listGroups(q: q.trim());
-    _rebuildConversations();
+    try {
+      users = await auth.api.listUsers(q: q.trim());
+      groups = await auth.api.listGroups(q: q.trim());
+      _rebuildConversations();
+    } on ApiException catch (e) {
+      threadError = e.message;
+      notifyListeners();
+    }
   }
 
   void setFilter(String next) {
@@ -521,6 +534,7 @@ class ChatController extends ChangeNotifier {
   }
 
   Future<void> open(Conversation conv) async {
+    final openToken = ++_openGeneration;
     if (_joinedGroupId != null && _joinedGroupId != conv.id) {
       socket.leaveGroup(_joinedGroupId!);
       _joinedGroupId = null;
@@ -541,10 +555,19 @@ class ChatController extends ChangeNotifier {
       final raw = conv.type == ConversationType.dm
           ? await auth.api.getConversation(conv.id)
           : await auth.api.getGroupMessages(conv.id);
+      if (openToken != _openGeneration || selected?.key != conv.key) return;
+
       final decorated = <ChatMessage>[];
       for (final row in raw) {
+        if (openToken != _openGeneration || selected?.key != conv.key) return;
         decorated.add(await decorate(row));
+        // Yield so taps/scroll stay responsive while decrypting a long history.
+        if (decorated.length % 8 == 0) {
+          await Future<void>.delayed(Duration.zero);
+        }
       }
+      if (openToken != _openGeneration || selected?.key != conv.key) return;
+
       messages = decorated;
       await storage.markConversationRead(me.id, conv.key);
       conv.unread = false;
@@ -557,14 +580,17 @@ class ChatController extends ChangeNotifier {
       _lastThreadSyncAt = DateTime.now().toUtc().toIso8601String();
       _rebuildConversations();
     } on ApiException catch (e) {
-      threadError = e.message;
+      if (openToken == _openGeneration) threadError = e.message;
     } finally {
-      loadingThread = false;
-      notifyListeners();
+      if (openToken == _openGeneration) {
+        loadingThread = false;
+        notifyListeners();
+      }
     }
   }
 
   void closeThread() {
+    _openGeneration++;
     if (_joinedGroupId != null) {
       socket.leaveGroup(_joinedGroupId!);
       _joinedGroupId = null;
@@ -573,6 +599,7 @@ class ChatController extends ChangeNotifier {
     messages = [];
     _lastThreadSyncAt = null;
     typingFrom = null;
+    loadingThread = false;
     notifyListeners();
   }
 
@@ -799,6 +826,78 @@ class ChatController extends ChangeNotifier {
       announcementBody: announcementBody,
       mediaCategory: raw['mediaCategory'] as String?,
     );
+  }
+
+  /// Send a WhatsApp-style story reaction as a sealed DM (website parity).
+  Future<void> sendStoryReaction(StoryItem story, String emoji) async {
+    final ownerId = story.userId;
+    final reaction = emoji.trim();
+    if (ownerId.isEmpty || reaction.isEmpty) {
+      throw ApiException('Invalid story reaction');
+    }
+    if (ownerId == me.id) {
+      throw ApiException("You can't react to your own story");
+    }
+
+    QcUser? peer;
+    for (final u in users) {
+      if (u.id == ownerId) {
+        peer = u;
+        break;
+      }
+    }
+    if (peer == null) {
+      for (final u in friends) {
+        if (u.id == ownerId) {
+          peer = u;
+          break;
+        }
+      }
+    }
+    if (peer == null || peer.publicKeys.isEmpty) {
+      peer = await auth.api.getUser(ownerId);
+    }
+    if (peer.publicKeys.isEmpty) {
+      throw ApiException("Can't react — missing this user's encryption keys");
+    }
+
+    final mySet = await storage.getCurrentKeySet(me.id);
+    if (mySet.isEmpty) {
+      throw ApiException('Import your encryption keys before reacting');
+    }
+
+    final payload = jsonEncode({
+      'type': 'story_reaction',
+      'storyId': story.id,
+      'mediaType': story.mediaType,
+      'emoji': reaction,
+    });
+
+    final forRecipient = sealMessage(payload, pickRandom(peer.publicKeys));
+    final forSender = sealMessage(payload, pickRandom(mySet.map((k) => k.publicKey).toList()));
+    final raw = await auth.api.sendMessage({
+      'to': ownerId,
+      'forRecipient': forRecipient.toJson(),
+      'forSender': forSender.toJson(),
+      'replyToStory': story.id,
+    });
+
+    final msg = await decorate(raw);
+    msg.text = payload;
+
+    final convKey = storage.conversationKeyForUser(ownerId);
+    await storage.setConversationActivity(
+      me.id,
+      convKey,
+      at: DateTime.now().toUtc().toIso8601String(),
+      from: me.id,
+    );
+
+    if (selected?.type == ConversationType.dm && selected?.id == ownerId) {
+      messages = [...messages, msg];
+    }
+    _rebuildConversations();
+    notifyListeners();
   }
 
   Future<void> sendText(String draft) async {
@@ -1457,7 +1556,8 @@ class ChatController extends ChangeNotifier {
   /// Polls the server for new messages in the currently open chat.
   Future<void> refreshOpenThread() async {
     final conv = selected;
-    if (conv == null || loadingThread) return;
+    if (conv == null || loadingThread || _threadRefreshInFlight) return;
+    _threadRefreshInFlight = true;
     try {
       List<Map<String, dynamic>> rows;
       if (_lastThreadSyncAt != null) {
@@ -1472,6 +1572,7 @@ class ChatController extends ChangeNotifier {
         rows = await auth.api.syncMessages(since: since);
       }
 
+      if (selected?.key != conv.key) return;
       for (final row in rows) {
         final map = _coerceMap(row);
         if (!_rawBelongsToConversation(map, conv)) continue;
@@ -1480,10 +1581,14 @@ class ChatController extends ChangeNotifier {
       _lastThreadSyncAt = DateTime.now().toUtc().toIso8601String();
     } catch (e, st) {
       debugPrint('refreshOpenThread failed: $e\n$st');
+    } finally {
+      _threadRefreshInFlight = false;
     }
   }
 
   Future<void> _pollSync() async {
+    if (_pollSyncInFlight) return;
+    _pollSyncInFlight = true;
     try {
       final rows = await auth.api.syncMessages();
       for (final row in rows) {
@@ -1494,7 +1599,10 @@ class ChatController extends ChangeNotifier {
       if (selected != null) {
         await refreshOpenThread();
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _pollSyncInFlight = false;
+    }
   }
 
   DateTime? _parseDate(dynamic v) {
