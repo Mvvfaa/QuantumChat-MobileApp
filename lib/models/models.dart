@@ -684,6 +684,9 @@ class ChatMessage {
     this.eventData,
     this.announcementBody,
     this.mediaCategory,
+    this.quantumAI = false,
+    this.streaming = false,
+    this.failed = false,
   });
 
   final String id;
@@ -700,7 +703,7 @@ class ChatMessage {
   List<Reaction> reactions;
   final String? replyToId;
   final String? replyToText;
-  final String kind;
+  String kind;
   AttachmentMeta? attachment;
   final ForwardedFromMeta? forwardedFrom;
   bool isPinned;
@@ -717,6 +720,9 @@ class ChatMessage {
   String? announcementBody;
   /// Server mediaCategory: photo | video | voice | document
   final String? mediaCategory;
+  bool quantumAI;
+  bool streaming;
+  bool failed;
 
   bool isMine(String myId) => from == myId;
   bool get hasMedia => attachment != null || kind == 'file' || kind == 'image' || kind == 'gif';
@@ -724,6 +730,7 @@ class ChatMessage {
   bool get isPoll => kind == 'poll' || pollData != null;
   bool get isEvent => kind == 'event' || eventData != null;
   bool get isAnnouncement => kind == 'announcement' || announcementBody != null;
+  bool get isAi => quantumAI || kind == 'ai' || kind == 'ai_note';
 
   String? get effectiveMediaCategory {
     if (mediaCategory != null && mediaCategory!.isNotEmpty) return mediaCategory;

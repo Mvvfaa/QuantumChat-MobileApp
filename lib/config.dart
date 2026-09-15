@@ -7,13 +7,21 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 /// or from Settings on device.
 class AppConfig {
   static const _defined = String.fromEnvironment('API_URL');
+  static const _aiDefined = String.fromEnvironment('AI_API_URL');
   static const productionFallback = 'https://quantum-chat-backend-six.vercel.app';
+  static const productionAiFallback = 'https://ai.quantumlogicslimited.com/api/v1';
 
   /// Same backend as chat.quantumlogicslimited.com. For a local backend, pass
   /// `--dart-define=API_URL=http://10.0.2.2:5000` (Android emulator -> host).
   static String get defaultApiBase {
     if (_defined.isNotEmpty) return _defined.replaceAll(RegExp(r'/$'), '');
     return productionFallback;
+  }
+
+  /// QuantumAI companion API (`/api/v1`). Local: `--dart-define=AI_API_URL=http://10.0.2.2:5001/api/v1`.
+  static String get defaultAiApiBase {
+    if (_aiDefined.isNotEmpty) return _aiDefined.replaceAll(RegExp(r'/$'), '');
+    return productionAiFallback;
   }
 
   static String apiUrl(String base) => '${base.replaceAll(RegExp(r'/$'), '')}/api';

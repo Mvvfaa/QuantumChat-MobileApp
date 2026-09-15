@@ -9,6 +9,7 @@ const _tokenKey = 'qc_token';
 const _userKey = 'qc_user';
 const _sessionIdKey = 'qc_session_id';
 const _apiBaseKey = 'qc_api_base';
+const _aiApiBaseKey = 'qc_ai_api_base';
 const _themeKey = 'qc_theme';
 const _appIconKey = 'qc_app_icon';
 const _rememberEmailKey = 'qc_remember_email';
@@ -163,6 +164,10 @@ class KeyStorage {
 
   String? getApiBase() => prefs.getString(_apiBaseKey);
   Future<void> setApiBase(String url) => prefs.setString(_apiBaseKey, url.replaceAll(RegExp(r'/$'), ''));
+
+  String? getAiApiBase() => prefs.getString(_aiApiBaseKey);
+  Future<void> setAiApiBase(String url) => prefs.setString(_aiApiBaseKey, url.replaceAll(RegExp(r'/$'), ''));
+  Future<void> clearAiApiBase() => prefs.remove(_aiApiBaseKey);
 
   String? getThemeId() => prefs.getString(_themeKey);
   Future<void> setThemeId(String id) => prefs.setString(_themeKey, id);
