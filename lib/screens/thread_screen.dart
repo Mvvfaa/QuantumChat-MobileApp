@@ -59,7 +59,6 @@ class _ThreadScreenState extends State<ThreadScreen> {
   final _composerFocus = FocusNode();
   final _composerLayerLink = LayerLink();
   OverlayEntry? _mentionOverlay;
-  Timer? _liveRefresh;
 
   Map<String, dynamic>? _chatTheme;
   Map<String, dynamic>? _themeCatalog;
@@ -83,10 +82,6 @@ class _ThreadScreenState extends State<ThreadScreen> {
       unawaited(context.read<ChatController>().refreshOpenThread());
       unawaited(_loadChatTheme());
       _syncScreenshotProtection();
-    });
-    _liveRefresh = Timer.periodic(const Duration(seconds: 2), (_) {
-      if (!mounted) return;
-      unawaited(context.read<ChatController>().refreshOpenThread());
     });
   }
 
@@ -166,7 +161,6 @@ class _ThreadScreenState extends State<ThreadScreen> {
   @override
   void dispose() {
     unawaited(setSecureFlag(false));
-    _liveRefresh?.cancel();
     _recordTimer?.cancel();
     unawaited(_recorder.dispose());
     _removeMentionOverlay();
