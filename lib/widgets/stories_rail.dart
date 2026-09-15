@@ -11,6 +11,8 @@ import '../screens/story_drafts_screen.dart';
 import '../state/auth_controller.dart';
 import '../state/chat_controller.dart';
 import '../state/theme_controller.dart';
+import '../crypto/key_storage.dart';
+import '../utils/story_media.dart';
 import 'common.dart';
 
 class StoriesRail extends StatelessWidget {
@@ -264,7 +266,6 @@ class StoriesRail extends StatelessWidget {
   }
 
   Future<void> _openStory(BuildContext context, StoryItem story) async {
-    final colors = context.read<ThemeController>().colors;
     final api = context.read<AuthController>().api;
     final me = context.read<AuthController>().user;
     final chat = context.read<ChatController>();
@@ -275,20 +276,87 @@ class StoriesRail extends StatelessWidget {
       context: context,
       barrierColor: Colors.black87,
       builder: (ctx) {
-        return FutureBuilder<Uint8List?>(
+        return FutureBuilder<({Uint8List? bytes, String? error, String? textFallback})>(
           future: () async {
-            await api.markStoryViewed(story.id);
-            mediaBytes = await api.getStoryMedia(story.id);
-            return mediaBytes;
+            try {
+              await api.markStoryViewed(story.id);
+              if (!story.sealed &&
+                  story.mediaType == 'text' &&
+                  story.textContent.trim().isNotEmpty) {
+                return (bytes: null, error: null, textFallback: story.textContent.trim());
+              }
+              if (me == null) {
+                return (bytes: null, error: 'Not signed in', textFallback: null);
+              }
+              final bytes = await resolveStoryMediaBytes(
+                story: story,
+                currentUserId: me.id,
+                storage: KeyStorage.instance,
+                fetchRaw: api.getStoryMedia,
+              );
+              mediaBytes = bytes;
+              if (bytes == null) {
+                return (bytes: null, error: 'Could not load story', textFallback: null);
+              }
+              if (story.mediaType != 'video' &&
+                  story.mediaType != 'audio' &&
+                  !looksLikeImageBytes(bytes)) {
+                return (
+                  bytes: null,
+                  error: story.sealed
+                      ? 'Could not decrypt this sealed story'
+                      : 'Story media is not a valid image',
+                  textFallback: null,
+                );
+              }
+              return (bytes: bytes, error: null, textFallback: null);
+            } catch (e) {
+              return (bytes: null, error: '$e', textFallback: null);
+            }
           }(),
           builder: (context, snap) {
             Widget body;
             if (snap.connectionState != ConnectionState.done) {
               body = const CircularProgressIndicator();
-            } else if (snap.data == null) {
-              body = Text('Could not load story', style: TextStyle(color: colors.textPrimary));
+            } else if (snap.hasError || snap.data?.error != null) {
+              body = Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  snap.data?.error ?? '${snap.error}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white70, fontSize: 14),
+                ),
+              );
+            } else if (snap.data?.textFallback != null) {
+              body = Container(
+                width: double.infinity,
+                constraints: const BoxConstraints(minHeight: 280),
+                color: const Color(0xFF111827),
+                alignment: Alignment.center,
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  snap.data!.textFallback!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700),
+                ),
+              );
+            } else if (snap.data?.bytes == null) {
+              body = const Text('Could not load story', style: TextStyle(color: Colors.white70));
             } else {
-              body = InteractiveViewer(child: Image.memory(snap.data!, fit: BoxFit.contain));
+              body = InteractiveViewer(
+                child: Image.memory(
+                  snap.data!.bytes!,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text(
+                      'Could not display this story',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                  ),
+                ),
+              );
             }
             return Dialog(
               backgroundColor: Colors.black,
@@ -299,6 +367,9 @@ class StoriesRail extends StatelessWidget {
                   ListTile(
                     leading: UserAvatar(name: story.username, userId: story.userId, hasAvatar: story.hasAvatar, size: 36),
                     title: Text(story.username, style: const TextStyle(color: Colors.white)),
+                    subtitle: story.sealed
+                        ? const Text('Sealed', style: TextStyle(color: Colors.white54, fontSize: 12))
+                        : null,
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -312,7 +383,7 @@ class StoriesRail extends StatelessWidget {
                           IconButton(
                             tooltip: 'Save to highlight',
                             onPressed: () async {
-                              final bytes = snap.data;
+                              final bytes = snap.data?.bytes ?? mediaBytes;
                               if (bytes == null) return;
                               await _saveToHighlight(ctx, story, bytes);
                             },

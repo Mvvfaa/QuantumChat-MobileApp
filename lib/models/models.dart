@@ -487,6 +487,9 @@ class StoryItem {
     this.caption = '',
     this.publishAt,
     this.allowReplies = true,
+    this.contentIv,
+    this.envelopes = const [],
+    this.textContent = '',
   });
 
   final String id;
@@ -503,6 +506,9 @@ class StoryItem {
   final String caption;
   final DateTime? publishAt;
   final bool allowReplies;
+  final String? contentIv;
+  final List<Map<String, dynamic>> envelopes;
+  final String textContent;
 
   bool get isDraft => status == 'draft';
   bool get isScheduled => status == 'scheduled';
@@ -519,6 +525,13 @@ class StoryItem {
     } else if (user != null) {
       userId = '$user';
     }
+    final envRaw = json['envelopes'];
+    final envelopes = <Map<String, dynamic>>[];
+    if (envRaw is List) {
+      for (final e in envRaw) {
+        if (e is Map) envelopes.add(Map<String, dynamic>.from(e));
+      }
+    }
     return StoryItem(
       id: '${json['id'] ?? json['_id']}',
       userId: userId,
@@ -534,6 +547,9 @@ class StoryItem {
       caption: json['caption'] as String? ?? '',
       publishAt: json['publishAt'] is String ? DateTime.tryParse(json['publishAt'] as String) : null,
       allowReplies: json['allowReplies'] != false,
+      contentIv: json['contentIv'] as String?,
+      envelopes: envelopes,
+      textContent: json['textContent'] as String? ?? '',
     );
   }
 }
