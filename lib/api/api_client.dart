@@ -432,6 +432,24 @@ class ApiClient {
     return body['data'] as Map<String, dynamic>;
   }
 
+  /// Persist a signed QuantumAI reply into the DM history (website parity).
+  Future<Map<String, dynamic>> publishQuantumAiResponse({
+    required String content,
+    required String contentHash,
+    required String requestId,
+    required String receipt,
+    String? model,
+  }) async {
+    final body = await post('/messages/quantum-ai-response', {
+      'content': content,
+      'contentHash': contentHash,
+      'requestId': requestId,
+      'receipt': receipt,
+      if (model != null && model.isNotEmpty) 'model': model,
+    });
+    return body['data'] as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> editMessage(String id, Map<String, dynamic> payload) async {
     final body = await patch('/messages/$id', payload);
     return body['data'] as Map<String, dynamic>;

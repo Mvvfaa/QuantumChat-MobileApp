@@ -42,6 +42,27 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
     super.dispose();
   }
 
+  Future<void> _openQuantumAi(BuildContext context) async {
+    final chat = context.read<ChatController>();
+    try {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Opening QuantumAI…'), duration: Duration(seconds: 1)),
+      );
+      await chat.openQuantumAiChat();
+      if (!context.mounted) return;
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const ThreadScreen()),
+      );
+      chat.closeThread();
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e is ApiException ? e.message : '$e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final chat = context.watch<ChatController>();
@@ -85,6 +106,11 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
         ),
         actions: [
           IconButton(
+            tooltip: 'QuantumAI',
+            onPressed: () => _openQuantumAi(context),
+            icon: const Icon(Icons.auto_awesome),
+          ),
+          IconButton(
             tooltip: 'Activity',
             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ActivityScreen())),
             icon: const Icon(Icons.timeline_outlined),
@@ -115,6 +141,11 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
             icon: const Icon(Icons.settings_outlined),
           ),
         ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _openQuantumAi(context),
+        icon: const Icon(Icons.auto_awesome),
+        label: const Text('QuantumAI'),
       ),
       body: ThemeScene(
         themeId: theme.id,
@@ -284,19 +315,31 @@ class _ChatHomeScreenState extends State<ChatHomeScreen> {
                                     size: 48,
                                   ),
                                 ),
-                                title: Text(
-                                  c.title,
-                                  style: TextStyle(
-                                    color: colors.textPrimary,
-                                    fontWeight: c.unread ? FontWeight.w800 : FontWeight.w600,
-                                  ),
+                                title: Row(
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        c.title,
+                                        style: TextStyle(
+                                          color: colors.textPrimary,
+                                          fontWeight: c.unread ? FontWeight.w800 : FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                    if (c.peer?.isQuantumAi == true) ...[
+                                      const SizedBox(width: 6),
+                                      Icon(Icons.auto_awesome, size: 14, color: colors.accentCyan),
+                                    ],
+                                  ],
                                 ),
                                 subtitle: Text(
-                                  (c.peer?.statusText.isNotEmpty == true ? c.peer!.statusText : null) ??
-                                      c.subtitle ??
-                                      (c.online
-                                          ? 'online'
-                                          : formatLastSeen(c.peer?.lastLoginAt, online: c.online)),
+                                  c.peer?.isQuantumAi == true
+                                      ? 'Your sealed AI companion'
+                                      : ((c.peer?.statusText.isNotEmpty == true ? c.peer!.statusText : null) ??
+                                          c.subtitle ??
+                                          (c.online
+                                              ? 'online'
+                                              : formatLastSeen(c.peer?.lastLoginAt, online: c.online))),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(color: c.unread ? colors.accentCyan : colors.textMuted),

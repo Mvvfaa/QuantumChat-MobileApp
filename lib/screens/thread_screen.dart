@@ -1079,17 +1079,19 @@ class _ThreadScreenState extends State<ThreadScreen> {
                           ],
                         ),
                         Text(
-                          typingName != null
-                              ? '$typingName is typing…'
-                              : conv.type == ConversationType.group
-                                  ? (conv.subtitle ?? 'Group')
-                                  : (conv.peer?.statusText.isNotEmpty == true
-                                      ? conv.peer!.statusText
-                                      : conv.online
-                                          ? 'online'
-                                          : formatLastSeen(conv.peer?.lastLoginAt)),
+                          chat.aiBusy
+                              ? 'QuantumAI is thinking…'
+                              : typingName != null
+                                  ? '$typingName is typing…'
+                                  : conv.type == ConversationType.group
+                                      ? (conv.subtitle ?? 'Group')
+                                      : (conv.peer?.statusText.isNotEmpty == true
+                                          ? conv.peer!.statusText
+                                          : conv.online
+                                              ? 'online'
+                                              : formatLastSeen(conv.peer?.lastLoginAt)),
                           style: TextStyle(
-                            color: typingName != null ? colors.accentCyan : colors.textMuted,
+                            color: (chat.aiBusy || typingName != null) ? colors.accentCyan : colors.textMuted,
                             fontSize: 12,
                             fontWeight: FontWeight.w500,
                           ),
@@ -1100,6 +1102,12 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 ],
               ),
         actions: [
+          if (chat.aiBusy)
+            IconButton(
+              tooltip: 'Stop QuantumAI',
+              onPressed: chat.cancelQuantumAi,
+              icon: Icon(Icons.stop_circle_outlined, color: colors.error),
+            ),
           IconButton(
             tooltip: searching ? 'Close search' : 'Search',
             onPressed: () {
@@ -1120,8 +1128,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
             icon: const Icon(Icons.more_vert),
           ),
         ],
-      ),
-      body: ThemeScene(
+      ),      body: ThemeScene(
         themeId: theme.id,
         child: Container(
           decoration: wpDeco,
@@ -1397,7 +1404,11 @@ class _ThreadScreenState extends State<ThreadScreen> {
                                   if (_showEmojiPicker) setState(() => _showEmojiPicker = false);
                                 },
                                 decoration: InputDecoration(
-                                  hintText: chat.editing != null ? 'Edit message…' : 'Encrypted message…',
+                                  hintText: chat.editing != null
+                                      ? 'Edit message…'
+                                      : chat.selectedIsQuantumAi
+                                          ? 'Ask QuantumAI…'
+                                          : 'Encrypted message…',
                                 ),
                               ),
                             ),
@@ -1409,19 +1420,19 @@ class _ThreadScreenState extends State<ThreadScreen> {
                               tooltip: composer.text.trim().isEmpty && chat.editing == null
                                   ? 'Record voice note'
                                   : 'Send',
-                              onPressed: chat.sending
+                              onPressed: (chat.sending || (chat.aiBusy && chat.selectedIsQuantumAi))
                                   ? null
                                   : (composer.text.trim().isEmpty && chat.editing == null
-                                      ? _startVoiceRecording
+                                      ? (chat.selectedIsQuantumAi ? null : _startVoiceRecording)
                                       : _send),
-                              icon: chat.sending
+                              icon: (chat.sending || chat.aiBusy)
                                   ? const SizedBox(
                                       width: 16,
                                       height: 16,
                                       child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                                     )
                                   : Icon(
-                                      composer.text.trim().isEmpty && chat.editing == null
+                                      composer.text.trim().isEmpty && chat.editing == null && !chat.selectedIsQuantumAi
                                           ? Icons.mic
                                           : Icons.send,
                                       color: colors.bubbleMineFg,
@@ -1831,25 +1842,49 @@ class _MessageBubble extends StatelessWidget {
                                           ),
                                         ],
                                       )
-                                    : LinkifiedText(
-                                        text: message.text!,
-                                        colors: colors,
-                                        baseStyle: TextStyle(
-                                          color: mine ? colors.bubbleMineFg : colors.bubbleTheirsFg,
-                                          height: 1.35,
-                                        ),
-                                        mentionStyle: TextStyle(
-                                          color: colors.accentCyan,
-                                          fontWeight: FontWeight.w600,
-                                          height: 1.35,
-                                        ),
+                                    : Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          if (message.isAi && !mine)
+                                            Padding(
+                                              padding: const EdgeInsets.only(bottom: 4),
+                                              child: Text(
+                                                message.streaming ? 'QuantumAI · typing' : 'QuantumAI',
+                                                style: TextStyle(
+                                                  color: colors.accentCyan,
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                            ),
+                                          LinkifiedText(
+                                            text: (message.text!.isEmpty && message.streaming)
+                                                ? '…'
+                                                : message.text!,
+                                            colors: colors,
+                                            baseStyle: TextStyle(
+                                              color: message.failed
+                                                  ? colors.error
+                                                  : (mine ? colors.bubbleMineFg : colors.bubbleTheirsFg),
+                                              height: 1.35,
+                                              fontStyle: message.streaming && message.text!.isEmpty
+                                                  ? FontStyle.italic
+                                                  : FontStyle.normal,
+                                            ),
+                                            mentionStyle: TextStyle(
+                                              color: colors.accentCyan,
+                                              fontWeight: FontWeight.w600,
+                                              height: 1.35,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                               )
                             else if (message.text == null && message.attachment == null)
                               Align(
                                 alignment: Alignment.centerLeft,
                                 child: Text(
-                                  'Unable to decrypt',
+                                  message.streaming ? 'QuantumAI is thinking…' : 'Unable to decrypt',
                                   style: TextStyle(
                                     color: colors.textMuted,
                                     fontStyle: FontStyle.italic,

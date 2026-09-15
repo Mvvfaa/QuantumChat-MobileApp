@@ -28,13 +28,14 @@ Native Flutter messenger for Android and iOS. It talks to the same QuantumChat b
 - Group invite-link admin (enable / disable / rotate / copy / share)
 - Group polls, events, announcements (create + vote)
 - Settings: profile, avatar upload + remove, date of birth, timezone, transliterated names, privacy (incl. birthday visibility + screenshot protection), password, 2FA, notification prefs, wallpapers, active sessions, language selector, themes (Dark / Light / Eyecare + dreamy FX), API URL, logout
+- QuantumAI DM streaming (same AI API as website; optional `--dart-define=AI_API_URL=...`)
 
 ## Not in this cut yet (website has them)
 
 - Voice / video calls and meetings (WebRTC)
 - Conversation vault / key vault
 - Native push (FCM / APNs) — backend push today is web VAPID-oriented
-- QuantumAI
+- QuantumAI **group** `@QuantumAI` mentions / side panel
 - Full i18n string catalogs (language preference is stored; UI strings are still English)
 - Sealed AES-GCM stories (mobile posts unsealed image / text-raster stories)
 - Secondary-device QR **scanner** (host QR display only — avoids NDK-heavy `mobile_scanner`; use the web Link Device page to scan)

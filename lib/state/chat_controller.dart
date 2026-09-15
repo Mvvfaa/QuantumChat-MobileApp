@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import '../api/ai_client.dart';
 import '../api/qc_socket.dart';
 import '../crypto/key_storage.dart';
 import '../crypto/qc_crypto.dart';
@@ -16,11 +17,13 @@ class ChatController extends ChangeNotifier {
   ChatController({required this.auth, required this.storage, required this.socket}) {
     auth.onSocketConnected = _onSocketReady;
     socket.addConnectListener(_onSocketReady);
+    _ai = QuantumAiClient(storage: storage);
   }
 
   final AuthController auth;
   final KeyStorage storage;
   final QcSocket socket;
+  late final QuantumAiClient _ai;
 
   List<QcUser> users = [];
   List<QcUser> friends = [];
@@ -37,6 +40,7 @@ class ChatController extends ChangeNotifier {
   bool loadingInbox = false;
   bool loadingThread = false;
   bool sending = false;
+  bool aiBusy = false;
   String? threadError;
   String? typingFrom;
   /// Per-conversation disappearing-message TTL in seconds (0 = off).
@@ -84,6 +88,7 @@ class ChatController extends ChangeNotifier {
     _pollTimer?.cancel();
     _threadPollTimer?.cancel();
     _typingDebounce?.cancel();
+    cancelQuantumAi();
     _removeSocketHandlers();
   }
 
@@ -399,6 +404,7 @@ class ChatController extends ChangeNotifier {
       }
       await _refreshFriendRequests();
       await refreshStories();
+      await _ensureQuantumAiContact();
       _rebuildConversations();
     } on ApiException catch (e) {
       threadError = e.message;
@@ -426,6 +432,81 @@ class ChatController extends ChangeNotifier {
       if (!ids.contains(f.id)) merged.add(f);
     }
     users = merged;
+  }
+
+  /// Prefer pinning the seeded QuantumAI system user in the inbox when discoverable.
+  Future<void> _ensureQuantumAiContact() async {
+    final existing = await resolveQuantumAiUser(forceNetwork: users.every((u) => !u.isQuantumAi));
+    if (existing == null) return;
+    if (!users.any((u) => u.id == existing.id)) {
+      users = [existing, ...users];
+    }
+  }
+
+  /// Find the QuantumAI system user (cached list first, then search).
+  Future<QcUser?> resolveQuantumAiUser({bool forceNetwork = false}) async {
+    for (final u in users) {
+      if (u.isQuantumAi) return u;
+    }
+    if (!forceNetwork && users.isNotEmpty) {
+      // Still try network once when missing — list may omit system users.
+    }
+    try {
+      final found = await auth.api.listUsers(q: 'QuantumAI');
+      for (final u in found) {
+        if (u.isQuantumAi || u.username.toLowerCase() == 'quantumai') {
+          if (!users.any((x) => x.id == u.id)) {
+            users = [u, ...users];
+          }
+          return u;
+        }
+      }
+      // Broader scan of first pages if username search is empty.
+      final all = await auth.api.listUsers(q: 'quantum');
+      for (final u in all) {
+        if (u.isQuantumAi) {
+          if (!users.any((x) => x.id == u.id)) {
+            users = [u, ...users];
+          }
+          return u;
+        }
+      }
+    } catch (e) {
+      debugPrint('resolveQuantumAiUser failed: $e');
+    }
+    return null;
+  }
+
+  /// Open (or prepare) the QuantumAI DM and return its conversation.
+  Future<Conversation> openQuantumAiChat() async {
+    final ai = await resolveQuantumAiUser(forceNetwork: true);
+    if (ai == null) {
+      throw ApiException(
+        'QuantumAI is not available on this server. Ask an admin to seed the QuantumAI system user.',
+      );
+    }
+    if (!users.any((u) => u.id == ai.id)) {
+      users = [ai, ...users];
+    }
+    _rebuildConversations();
+    Conversation? conv;
+    for (final c in conversations) {
+      if (c.type == ConversationType.dm && c.id == ai.id) {
+        conv = c;
+        break;
+      }
+    }
+    conv ??= Conversation(
+      key: storage.conversationKeyForUser(ai.id),
+      type: ConversationType.dm,
+      id: ai.id,
+      title: ai.title.isNotEmpty ? ai.title : 'QuantumAI',
+      subtitle: 'Your sealed AI companion',
+      peer: ai,
+      sortAt: DateTime.now().toUtc().toIso8601String(),
+    );
+    unawaited(open(conv));
+    return conv;
   }
 
   Future<void> searchPeople(String q) async {
@@ -503,6 +584,9 @@ class ChatController extends ChangeNotifier {
 
     items.sort((a, b) {
       if (a.isSelfChat != b.isSelfChat) return a.isSelfChat ? -1 : 1;
+      final aAi = a.peer?.isQuantumAi == true;
+      final bAi = b.peer?.isQuantumAi == true;
+      if (aAi != bAi) return aAi ? -1 : 1;
       if (a.unread != b.unread) return a.unread ? -1 : 1;
       return b.sortAt.compareTo(a.sortAt);
     });
@@ -825,7 +909,183 @@ class ChatController extends ChangeNotifier {
       eventData: eventData,
       announcementBody: announcementBody,
       mediaCategory: raw['mediaCategory'] as String?,
+      quantumAI: resolvedKind == 'ai' || resolvedKind == 'ai_note',
     );
+  }
+
+  bool get selectedIsQuantumAi {
+    final peer = selected?.peer;
+    if (peer != null) return peer.isQuantumAi;
+    final id = selected?.id;
+    if (id == null) return false;
+    for (final u in users) {
+      if (u.id == id) return u.isQuantumAi;
+    }
+    return false;
+  }
+
+  void cancelQuantumAi() {
+    _ai.cancel();
+    aiBusy = false;
+    var changed = false;
+    for (final m in messages) {
+      if (!m.streaming) continue;
+      m.streaming = false;
+      m.failed = true;
+      if ((m.text ?? '').trim().isEmpty) m.text = 'Request cancelled.';
+      changed = true;
+    }
+    if (changed) messages = [...messages];
+    notifyListeners();
+  }
+
+  Future<void> sendPrivateQuantumAIMessage(String text) async {
+    final conv = selected;
+    if (conv == null || conv.type != ConversationType.dm) {
+      throw ApiException('QuantumAI DMs only');
+    }
+    if (aiBusy) throw ApiException('QuantumAI is already responding');
+    threadError = null;
+    final peer = conv.peer ??
+        users.cast<QcUser?>().firstWhere((u) => u?.id == conv.id, orElse: () => null);
+    if (peer == null || !peer.isQuantumAi) {
+      throw ApiException('This chat is not QuantumAI');
+    }
+    if (peer.publicKeys.isEmpty) {
+      throw ApiException('Missing QuantumAI encryption keys');
+    }
+    final mySet = await storage.getCurrentKeySet(me.id);
+    if (mySet.isEmpty) {
+      throw ApiException('Missing your encryption keys');
+    }
+
+    final forRecipient = sealMessage(text, pickRandom(peer.publicKeys));
+    final forSender = sealMessage(text, pickRandom(mySet.map((k) => k.publicKey).toList()));
+    final rawPrompt = await auth.api.sendMessage({
+      'to': conv.id,
+      'forRecipient': forRecipient.toJson(),
+      'forSender': forSender.toJson(),
+    });
+    final promptMsg = await decorate(rawPrompt);
+    promptMsg.text = text;
+    messages = [...messages, promptMsg];
+    notifyListeners();
+
+    final assistantId = 'quantum-ai-assistant-${DateTime.now().millisecondsSinceEpoch}';
+    final placeholder = ChatMessage(
+      id: assistantId,
+      from: peer.id,
+      to: me.id,
+      text: '',
+      createdAt: DateTime.now().toUtc(),
+      kind: 'ai',
+      quantumAI: true,
+      streaming: true,
+      pending: true,
+    );
+    messages = [...messages, placeholder];
+    aiBusy = true;
+    notifyListeners();
+
+    try {
+      final recentContext = messages
+          .where((m) => m.id != assistantId && (m.text ?? '').trim().isNotEmpty)
+          .toList()
+          .reversed
+          .take(20)
+          .toList()
+          .reversed
+          .map((m) {
+        final who = m.isMine(me.id) ? 'User' : 'QuantumAI';
+        return '$who: ${m.text}';
+      }).toList();
+
+      final done = await _ai.streamChat(
+        message: text,
+        context: recentContext,
+        link: {'quantumChatPeerId': me.id},
+        ephemeral: true,
+        onChunk: (chunk) {
+          final idx = messages.indexWhere((m) => m.id == assistantId);
+          if (idx < 0) return;
+          final current = messages[idx];
+          current.text = '${current.text ?? ''}$chunk';
+          messages = [...messages];
+          notifyListeners();
+        },
+      );
+
+      if (done.hasSignedReceipt) {
+        try {
+          final stored = await auth.api.publishQuantumAiResponse(
+            content: done.content,
+            contentHash: done.contentHash!,
+            requestId: done.requestId!,
+            receipt: done.receipt!,
+            model: done.model,
+          );
+          final sealed = await decorate(stored);
+          sealed.quantumAI = true;
+          sealed.kind = 'ai';
+          messages = [
+            for (final m in messages)
+              if (m.id == assistantId) sealed else m,
+          ];
+        } on ApiException catch (e) {
+          // Stream OK but receipt publish failed — keep visible reply.
+          debugPrint('QuantumAI receipt publish failed: ${e.message}');
+          final idx = messages.indexWhere((m) => m.id == assistantId);
+          if (idx >= 0) {
+            messages[idx].text = done.content;
+            messages[idx].streaming = false;
+            messages[idx].kind = 'ai';
+            messages[idx].quantumAI = true;
+            messages = [...messages];
+          }
+          threadError =
+              'QuantumAI replied, but the answer was not sealed into history (${e.message})';
+        }
+      } else {
+        final idx = messages.indexWhere((m) => m.id == assistantId);
+        if (idx >= 0) {
+          messages[idx].text = done.content;
+          messages[idx].streaming = false;
+          messages[idx].kind = 'ai';
+          messages[idx].quantumAI = true;
+          messages = [...messages];
+        }
+        threadError =
+            'QuantumAI replied, but QUANTUM_AI_SERVICE_SECRET is missing/mismatched — reply was not sealed into chat history';
+      }
+
+      await storage.setConversationActivity(
+        me.id,
+        conv.key,
+        at: DateTime.now().toUtc().toIso8601String(),
+        from: peer.id,
+      );
+      _rebuildConversations();
+    } catch (e) {
+      final idx = messages.indexWhere((m) => m.id == assistantId);
+      if (idx >= 0) {
+        final existing = (messages[idx].text ?? '').trim();
+        messages[idx].text = existing.isNotEmpty
+            ? existing
+            : (e is ApiException ? e.message : 'QuantumAI failed to respond.');
+        messages[idx].streaming = false;
+        messages[idx].failed = true;
+        messages = [...messages];
+      }
+      threadError = e is ApiException ? e.message : '$e';
+      rethrow;
+    } finally {
+      final idx = messages.indexWhere((m) => m.id == assistantId);
+      if (idx >= 0) {
+        messages[idx].streaming = false;
+      }
+      aiBusy = false;
+      notifyListeners();
+    }
   }
 
   /// Send a WhatsApp-style story reaction as a sealed DM (website parity).
@@ -904,6 +1164,29 @@ class ChatController extends ChangeNotifier {
     final conv = selected;
     final text = draft.trim();
     if (conv == null || text.isEmpty || sending) return;
+
+    if (selectedIsQuantumAi) {
+      if (aiBusy) {
+        threadError = 'QuantumAI is already responding';
+        notifyListeners();
+        return;
+      }
+      sending = true;
+      notifyListeners();
+      try {
+        clearComposerContext();
+        await sendPrivateQuantumAIMessage(text);
+      } on ApiException catch (e) {
+        threadError = e.message;
+      } catch (e) {
+        threadError = '$e';
+      } finally {
+        sending = false;
+        notifyListeners();
+      }
+      return;
+    }
+
     // Lock immediately so a second Enter/tap cannot start another send.
     sending = true;
     notifyListeners();

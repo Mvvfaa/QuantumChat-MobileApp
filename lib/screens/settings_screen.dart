@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
+import '../config.dart';
 import '../crypto/key_storage.dart';
 import '../models/models.dart';
 import '../state/auth_controller.dart';
@@ -31,6 +32,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final bio = TextEditingController(text: context.read<AuthController>().user?.bio ?? '');
   late final statusText = TextEditingController(text: context.read<AuthController>().user?.statusText ?? '');
   late final apiBase = TextEditingController(text: context.read<AuthController>().apiBase);
+  late final aiApiBase = TextEditingController(
+    text: context.read<AuthController>().storage.getAiApiBase() ?? AppConfig.defaultAiApiBase,
+  );
   final currentPassword = TextEditingController();
   final newPassword = TextEditingController();
   final totpCode = TextEditingController();
@@ -69,6 +73,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     bio.dispose();
     statusText.dispose();
     apiBase.dispose();
+    aiApiBase.dispose();
     currentPassword.dispose();
     newPassword.dispose();
     totpCode.dispose();
@@ -583,6 +588,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
               setState(() => status = 'API URL saved. Log out and back in if you were already connected.');
             },
             child: const Text('Save API URL'),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'QuantumAI companion API (…/api/v1). Local Android emulator: http://10.0.2.2:5001/api/v1',
+            style: TextStyle(color: colors.textMuted, fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: aiApiBase,
+            decoration: const InputDecoration(hintText: 'https://ai.quantumlogicslimited.com/api/v1'),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton(
+            onPressed: () async {
+              final url = aiApiBase.text.trim();
+              if (url.isEmpty) {
+                await auth.storage.clearAiApiBase();
+                aiApiBase.text = AppConfig.defaultAiApiBase;
+              } else {
+                await auth.storage.setAiApiBase(url);
+              }
+              setState(() => status = 'QuantumAI API URL saved.');
+            },
+            child: const Text('Save QuantumAI URL'),
           ),
           const SizedBox(height: 24),
           _Section(title: 'Messages', colors: colors),
